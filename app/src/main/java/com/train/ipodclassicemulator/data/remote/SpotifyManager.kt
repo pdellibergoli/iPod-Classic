@@ -18,7 +18,7 @@ class SpotifyManager(private val context: Context) {
     private val clientId = "052aa3ece4e846d9a110f5bdabd8c565"
     val clientSecret = "543095b721f1485e9fa5cae4c58d066a"
     val redirectUri = "ipodapp://spotify-callback"
-    private var spotifyAppRemote: SpotifyAppRemote? = null
+    var spotifyAppRemote: SpotifyAppRemote? = null
     // 🚀 Callback per aggiornare l'interfaccia quando cambia qualcosa su Spotify
     var onPlayerStateChanged: ((PlayerState) -> Unit)? = null
 
@@ -29,7 +29,15 @@ class SpotifyManager(private val context: Context) {
         }
     }
 
-    var accessToken by androidx.compose.runtime.mutableStateOf<String?>(null)
+    var accessToken: String?
+        get() = context.getSharedPreferences("spotify_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("auth_token", null)
+        set(value) {
+            context.getSharedPreferences("spotify_prefs", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString("auth_token", value)
+                .apply()
+        }
 
     fun getClientHeader(): String {
         val rawString = "$clientId:$clientSecret"

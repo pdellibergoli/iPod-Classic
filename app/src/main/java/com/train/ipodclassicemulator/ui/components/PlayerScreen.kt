@@ -56,7 +56,7 @@ fun PlayerScreen(
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        IPodStatusBar(title = "Now Playing")
+        // 🟢 RIMOSSA LA STATUSBAR DUPLICATA DA QUI - CI PENSA LA MAINACTIVITY!
 
         Spacer(modifier = Modifier.height(4.dp))
 

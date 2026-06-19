@@ -28,7 +28,8 @@ fun SettingsScreen(
     val themes = IPodThemeType.values()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        IPodStatusBar(title = "Impostazioni")
+        // 🟢 RIMOSSA LA STATUSBAR DUPLICATA DA QUI - CI PENSA LA MAINACTIVITY!
+
         Text(
             "Scegli un tema",
             fontSize = 14.sp,

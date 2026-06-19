@@ -53,3 +53,67 @@ data class SpotifySavedTracksResponse(
 data class SavedTrackItem(
     val track: SpotifyTrackDetails
 )
+
+data class SpotifySavedAlbumsResponse(
+    val items: List<SpotifyAlbumItem>
+)
+
+data class SpotifyAlbumItem(
+    val album: SpotifyAlbumDetails
+)
+
+data class SpotifyAlbumDetails(
+    val id: String,
+    val name: String,
+    val uri: String
+)
+
+// 📦 MODELLI WRAPPER PER GLI ARTISTI SEGUITI
+data class SpotifyFollowedArtistsResponse(
+    val artists: SpotifyArtistsContainer
+)
+
+data class SpotifyArtistsContainer(
+    val items: List<SpotifyArtistDetails>
+)
+
+data class SpotifyArtistDetails(
+    val id: String,
+    val name: String,
+    val uri: String
+)
+
+data class SpotifyArtistTopTracksResponse(
+    val tracks: List<SpotifyArtistTrackModel>
+)
+
+data class SpotifyArtistTrackModel(
+    val id: String,
+    val name: String,
+    val uri: String,
+    val artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistInfo>
+)
+
+// 📦 MODELLI DI RISPOSTA PER GLI ALBUM
+data class SpotifySavedAlbumItem(val album: SpotifyAlbumModelInfo)
+data class SpotifyAlbumModelInfo(val id: String, val name: String, val uri: String)
+
+// 📦 MODELLI DI RISPOSTA PER GLI ARTISTI
+data class SpotifyArtistModelInfo(val id: String, val name: String, val uri: String)
+
+// 📦 MODELLI DI RISPOSTA PER LE TRACCE SEMPLIFICATE DELL'ALBUM
+data class SpotifyAlbumTracksResponse(val items: List<SpotifySimplifiedTrack>)
+data class SpotifySimplifiedTrack(
+    val id: String,
+    val name: String,
+    val uri: String,
+    val artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistInfo>
+)
+
+data class SpotifySearchResponse(
+    val tracks: SpotifySearchTracksContainer
+)
+
+data class SpotifySearchTracksContainer(
+    val items: List<com.train.ipodclassicemulator.data.model.SpotifyTrackDetails>
+)

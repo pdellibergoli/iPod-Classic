@@ -1,7 +1,12 @@
 package com.train.ipodclassicemulator.data.remote
 
+import com.train.ipodclassicemulator.data.model.SpotifyAlbumTracksResponse
+import com.train.ipodclassicemulator.data.model.SpotifyArtistTopTracksResponse
+import com.train.ipodclassicemulator.data.model.SpotifyFollowedArtistsResponse
 import com.train.ipodclassicemulator.data.model.SpotifyPlaylistTracksResponse
+import com.train.ipodclassicemulator.data.model.SpotifySavedAlbumsResponse
 import com.train.ipodclassicemulator.data.model.SpotifySavedTracksResponse
+import com.train.ipodclassicemulator.data.model.SpotifySearchResponse
 import com.train.ipodclassicemulator.data.model.SpotifyTokenResponse
 import com.train.ipodclassicemulator.data.model.SpotifyUserPlaylistsResponse
 import retrofit2.Response
@@ -9,7 +14,7 @@ import retrofit2.http.*
 
 interface SpotifyApiService {
 
-    // 🚀 URL ufficiale per scambiare il Code con il Token definitivo
+    // 🟢 L'autenticazione usa l'endpoint completo dell'Accounts Service di Spotify
     @FormUrlEncoded
     @POST("https://accounts.spotify.com/api/token")
     suspend fun getAccessToken(
@@ -19,44 +24,74 @@ interface SpotifyApiService {
         @Field("redirect_uri") redirectUri: String
     ): SpotifyTokenResponse
 
-    // 🚀 URL ufficiale per scaricare le playlist reali dell'utente
-    @GET("https://api.spotify.com/v1/me/playlists")
+    // 🟢 Tutti gli endpoint successivi usano URL relativi puliti che si agganciano al baseUrl reale
+    @GET("me/playlists")
     suspend fun getUserPlaylists(
         @Header("Authorization") bearerToken: String
     ): SpotifyUserPlaylistsResponse
 
-    // 🚀 Recupera i brani contenuti in una specifica playlist
-    @GET("https://api.spotify.com/v1/playlists/{playlist_id}/tracks")
+    @GET("playlists/{playlist_id}/tracks")
     suspend fun getPlaylistTracks(
         @Header("Authorization") bearerToken: String,
         @Path("playlist_id") playlistId: String
     ): SpotifyPlaylistTracksResponse
 
-    // 💜 Recupera i "Brani che mi piacciono" (Liked Songs)
-    @GET("https://api.spotify.com/v1/me/tracks")
+    @GET("me/tracks")
     suspend fun getSavedTracks(
         @Header("Authorization") bearerToken: String,
         @Query("limit") limit: Int = 50
     ): SpotifySavedTracksResponse
 
-    // ❤️ Controlla se uno o più brani sono già nei preferiti
-    @GET("https://api.spotify.com/v1/me/tracks/contains")
+    @GET("me/tracks/contains")
     suspend fun checkTracksSaved(
         @Header("Authorization") bearerToken: String,
         @Query("ids") trackIds: String
     ): List<Boolean>
 
-    // ❤️ Aggiunge un brano ai preferiti
-    @PUT("https://api.spotify.com/v1/me/tracks")
+    @PUT("me/tracks")
     suspend fun saveTrack(
         @Header("Authorization") bearerToken: String,
         @Query("ids") trackIds: String
     ): Response<Unit>
 
-    // 💔 Rimuove un brano dai preferiti
-    @DELETE("https://api.spotify.com/v1/me/tracks")
+    @DELETE("me/tracks")
     suspend fun removeTrack(
         @Header("Authorization") bearerToken: String,
         @Query("ids") trackIds: String
     ): Response<Unit>
+
+    @GET("me/albums")
+    suspend fun getSavedAlbums(
+        @Header("Authorization") bearerToken: String,
+        @Query("limit") limit: Int = 30
+    ): SpotifySavedAlbumsResponse
+
+    @GET("v1/me/following?type=artist")
+    suspend fun getFollowedArtists(
+        @Header("Authorization") bearerToken: String,
+        @Query("limit") limit: Int = 30
+    ): SpotifyFollowedArtistsResponse
+
+    @GET("albums/{id}/tracks")
+    suspend fun getAlbumTracks(
+        @Header("Authorization") bearerToken: String,
+        @Path("id") albumId: String,
+        @Query("limit") limit: Int = 50
+    ): SpotifyAlbumTracksResponse
+
+    @GET("artists/{id}/top-tracks")
+    suspend fun getArtistTopTracks(
+        @Header("Authorization") bearerToken: String,
+        @Path("id") artistId: String,
+        @Query("market") market: String = "IT"
+    ): SpotifyArtistTopTracksResponse
+
+    @GET("v1/search")
+    suspend fun searchTracks(
+        @Header("Authorization") bearerToken: String,
+        @Query("q") query: String,
+        @Query("type") type: String = "track",
+        @Query("market") market: String = "IT",
+        @Query("limit") limit: Int = 30
+    ): SpotifySearchResponse
 }
