@@ -6,6 +6,9 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.spotify.android.appremote.api.ConnectionParams
 import com.spotify.android.appremote.api.Connector
 import com.spotify.android.appremote.api.SpotifyAppRemote
@@ -19,6 +22,7 @@ class SpotifyManager(private val context: Context) {
     val redirectUri = "ipodapp://spotify-callback"
     var spotifyAppRemote: SpotifyAppRemote? = null
     var onPlayerStateChanged: ((PlayerState) -> Unit)? = null
+    var isShuffling by mutableStateOf(false)
 
     private val prefs get() = context.getSharedPreferences("spotify_prefs", Context.MODE_PRIVATE)
 
@@ -97,6 +101,9 @@ class SpotifyManager(private val context: Context) {
 
     fun subscribeToPlayerState() {
         spotifyAppRemote?.playerApi?.subscribeToPlayerState()?.setEventCallback { state ->
+            isShuffling = state.playbackOptions.isShuffling
+            val track = state.track
+            val imageUrl = "https://i.scdn.co/image/${track.imageUri.raw?.removePrefix("spotify:image:")}"
             onPlayerStateChanged?.invoke(state)
         }
     }

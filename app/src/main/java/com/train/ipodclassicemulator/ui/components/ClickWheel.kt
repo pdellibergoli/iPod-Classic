@@ -18,6 +18,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.compose.rememberNavController
 import com.train.ipodclassicemulator.ui.theme.IPodTheme
 import kotlin.math.atan2
 
@@ -36,6 +37,7 @@ fun ClickWheel(
     val colors = IPodTheme.colors
     var previousAngle by remember { mutableStateOf(0.0) }
     var isCenterPressed by remember { mutableStateOf(false) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Box(
         modifier = modifier
@@ -49,13 +51,16 @@ fun ClickWheel(
                 shape = CircleShape
             )
             .pointerInput(Unit) {
+                // Utilizziamo awaitPointerEventScope per gestire tutto insieme
                 detectTapGestures(
                     onTap = { offset ->
+                        // 🟢 TAP: Vibrazione feedback
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+
                         val centerX = size.width / 2f
                         val centerY = size.height / 2f
                         val x = offset.x - centerX
                         val y = offset.y - centerY
-
                         val angle = Math.toDegrees(atan2(y.toDouble(), x.toDouble()))
                         val normalizedAngle = if (angle < 0) angle + 360 else angle
 
@@ -67,20 +72,23 @@ fun ClickWheel(
                         }
                     },
                     onLongPress = { offset ->
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         val centerX = size.width / 2f
                         val centerY = size.height / 2f
                         val x = offset.x - centerX
                         val y = offset.y - centerY
                         val angle = Math.toDegrees(atan2(y.toDouble(), x.toDouble()))
                         val normalizedAngle = if (angle < 0) angle + 360 else angle
-                        // Tieni premuto MENU per aprire le impostazioni/tema
+
                         if (normalizedAngle in 225.0..315.0) {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             onMenuLongClick()
                         }
                     }
                 )
             }
             .pointerInput(Unit) {
+                // Il drag resta separato ma assicurati che sia il SECONDO pointerInput
                 detectDragGestures(
                     onDragStart = { offset ->
                         val centerX = size.width / 2f
@@ -96,11 +104,9 @@ fun ClickWheel(
                         if (deltaAngle > 180) deltaAngle -= 360
                         if (deltaAngle < -180) deltaAngle += 360
 
-                        if (deltaAngle >= 15.0) {
-                            onScrollNext()
-                            previousAngle = currentAngle
-                        } else if (deltaAngle <= -15.0) {
-                            onScrollPrevious()
+                        if (Math.abs(deltaAngle) >= 15.0) {
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            if (deltaAngle > 0) onScrollNext() else onScrollPrevious()
                             previousAngle = currentAngle
                         }
                     }
@@ -164,8 +170,12 @@ fun ClickWheel(
                             isCenterPressed = true
                             tryAwaitRelease()
                             isCenterPressed = false
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         },
-                        onTap = { onSelectClick() }
+                        onTap = {
+                            onSelectClick()
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        }
                     )
                 }
         )

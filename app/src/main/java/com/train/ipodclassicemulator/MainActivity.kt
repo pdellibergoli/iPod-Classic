@@ -44,7 +44,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.spotify.protocol.types.PlayerState
 import com.spotify.protocol.types.Track
+import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.ui.theme.MontserratFontFamily
+
+private const val TAG = "IPodMainActivity"
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
@@ -69,11 +72,9 @@ class MainActivity : ComponentActivity() {
         val savedSecret = spotifyManager.getClientSecret()
 
         if (!savedId.isNullOrBlank() && !savedSecret.isNullOrBlank()) {
-            // 🟢 Le chiavi esistono: Inizializzazione standard
             initializeSpotifyServices()
             currentScreenState = ScreenState.MAIN_MENU
         } else {
-            // 🔴 Chiavi mancanti: Forza il setup tramite tastiera di sistema
             currentScreenState = ScreenState.CREDENTIALS_SETUP
         }
 
@@ -137,11 +138,15 @@ class MainActivity : ComponentActivity() {
                 var isCurrentTrackLiked by remember { mutableStateOf(false) }
                 var currentPlaybackMode by remember { mutableStateOf(0) }
 
+                // 🟢 Variabile locale per aggirare il bug del PlayerState nei preferiti senza contesto nativo
+                var isLocalShuffleEnabled by remember { mutableStateOf(false) }
+
                 val playlistLazyListState = rememberLazyListState()
                 val trackLazyListState = rememberLazyListState()
                 val settingsLazyListState = rememberLazyListState()
 
                 val context = androidx.compose.ui.platform.LocalContext.current
+                val spotifyManager = remember { this@MainActivity.spotifyManager }
 
                 DisposableEffect(Unit) {
                     val batteryReceiver = object : android.content.BroadcastReceiver() {
@@ -188,8 +193,18 @@ class MainActivity : ComponentActivity() {
                                 isTrackPlaying = !playerState.isPaused
 
                                 val isShuffle = playerState.playbackOptions.isShuffling
-                                currentPlaybackMode = if (isShuffle) 1 else 0
-
+                                val targetPlaylist = playlists.getOrNull(selectedPlaylistIndex)
+                                if (targetPlaylist?.id == "favorites_virtual_id") {
+                                    // Se siamo nei preferiti, la UI segue lo stato locale,
+                                    // ma se lo stato locale non è mai stato toccato, lo allineiamo a quello corrente di Spotify
+                                    currentPlaybackMode = if (isLocalShuffleEnabled) 1 else 0
+                                    spotifyManager.isShuffling = isLocalShuffleEnabled
+                                } else {
+                                    // Nelle playlist standard, aggiorniamo SEMPRE sia lo stato nativo che quello locale
+                                    currentPlaybackMode = if (isShuffle) 1 else 0
+                                    spotifyManager.isShuffling = isShuffle
+                                    isLocalShuffleEnabled = isShuffle // Allinea il flag locale così è pronto se passi ai preferiti
+                                }
                                 val imageUriStr = track.imageUri?.raw
                                 if (!imageUriStr.isNullOrEmpty()) {
                                     val imageId = imageUriStr.substringAfter("image:")
@@ -205,7 +220,8 @@ class MainActivity : ComponentActivity() {
                                         com.train.ipodclassicemulator.data.model.SpotifyArtistInfo(
                                             name = track.artist.name ?: "Unknown Artist"
                                         )
-                                    )
+                                    ),
+                                    album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
                                 )
 
                                 lifecycleScope.launch {
@@ -216,7 +232,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(isTrackPlaying, currentProgressMs, trackDurationMs) {
+                LaunchedEffect(isTrackPlaying, currentProgressMs, trackDurationMs, isLocalShuffleEnabled, spotifyManager.isShuffling) {
                     if (isTrackPlaying) {
                         delay(1000)
                         if (currentProgressMs < trackDurationMs - 1500L) {
@@ -224,8 +240,14 @@ class MainActivity : ComponentActivity() {
                         } else if (trackDurationMs > 0L) {
                             val targetPlaylist = playlists.getOrNull(selectedPlaylistIndex)
                             if (targetPlaylist?.id == "favorites_virtual_id") {
-                                if (selectedTrackIndex < tracks.lastIndex) {
-                                    selectedTrackIndex++
+                                if (tracks.isNotEmpty()) {
+                                    if (isLocalShuffleEnabled) {
+                                        selectedTrackIndex = (tracks.indices).random()
+                                        Log.d(TAG, "Fine brano: Shuffle attivo (Locale). Nuovo brano random: $selectedTrackIndex")
+                                    } else {
+                                        if (selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
+                                        Log.d(TAG, "Fine brano: Shuffle spento (Locale). Prossimo brano sequenziale: $selectedTrackIndex")
+                                    }
                                     val nextTrack = tracks[selectedTrackIndex]
                                     currentProgressMs = 0L
                                     playingTrackDetails = nextTrack
@@ -279,7 +301,6 @@ class MainActivity : ComponentActivity() {
 
                 val colors = IPodTheme.colors
 
-                // 🛑 RAMO SPECIALE DI SETUP: Esce dalla grafica dell'iPod per usare la tastiera nativa
                 if (currentScreenState == ScreenState.CREDENTIALS_SETUP) {
                     SpotifySetupScreen(
                         onCredentialsSaved = { clientId, clientSecret ->
@@ -289,7 +310,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 } else {
-                    // ⚙️ INTERFACCIA STANDARD DELL'IPOD CLASSIC (Gestita da Ghiera)
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -471,7 +491,6 @@ class MainActivity : ComponentActivity() {
                                                             Spacer(modifier = Modifier.width(10.dp))
 
                                                             Column(modifier = Modifier.weight(1f)) {
-                                                                // 🟢 RISOLTO: Reinserito il tag Text corretto
                                                                 Text(
                                                                     text = playlist.name,
                                                                     fontFamily = MontserratFontFamily,
@@ -559,7 +578,7 @@ class MainActivity : ComponentActivity() {
                                                                     fontSize = 15.sp,
                                                                     color = if (isSelected) Color.White else Color.Black
                                                                 )
-                                                                val artistName = album.artists?.firstOrNull()?.name ?: "Artista sconosciuto"
+                                                                val artistName = album.artists?.firstOrNull()?.name ?: "Unknown Artist"
                                                                 Text(
                                                                     text = artistName,
                                                                     fontFamily = MontserratFontFamily,
@@ -764,18 +783,16 @@ class MainActivity : ComponentActivity() {
                                                                 .padding(horizontal = 4.dp, vertical = 6.dp),
                                                             verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            // 🟢 Copertina quadrata del brano (estratta dall'album di appartenenza)
                                                             Box(
                                                                 modifier = Modifier
                                                                     .size(42.dp)
                                                                     .clip(RoundedCornerShape(4.dp))
                                                                     .background(Color.LightGray)
                                                             ) {
-                                                                // Spotify tipicamente inserisce le immagini all'interno dell'oggetto album del brano
                                                                 val trackCoverUrl = track.album?.images?.firstOrNull()?.url
 
                                                                 coil.compose.AsyncImage(
-                                                                    model = trackCoverUrl ?: "https://picsum.photos/100", // Fallback se non trova la cover
+                                                                    model = trackCoverUrl ?: "https://picsum.photos/100",
                                                                     contentDescription = null,
                                                                     modifier = Modifier.fillMaxSize(),
                                                                     contentScale = androidx.compose.ui.layout.ContentScale.Crop
@@ -842,12 +859,18 @@ class MainActivity : ComponentActivity() {
 
                                                                     when (nextMode) {
                                                                         0 -> {
+                                                                            // 🟢 Disattivazione Shuffle: Allineamento immediato locale e SDK
+                                                                            isLocalShuffleEnabled = false
+                                                                            spotifyManager.isShuffling = false
                                                                             spotifyManager.setShuffle(false)
                                                                             lifecycleScope.launch {
                                                                                 repo.setSpotifyShuffleMode(false)
                                                                             }
                                                                         }
                                                                         1 -> {
+                                                                            // 🟢 Attivazione Shuffle: Allineamento immediato locale e SDK
+                                                                            isLocalShuffleEnabled = true
+                                                                            spotifyManager.isShuffling = true
                                                                             spotifyManager.setShuffle(true)
                                                                             lifecycleScope.launch {
                                                                                 repo.setSpotifyShuffleMode(true)
@@ -1089,7 +1112,13 @@ class MainActivity : ComponentActivity() {
                                                 currentProgressMs = 0L
                                                 playingTrackDetails = selectedTrack
                                                 currentScreenState = ScreenState.TRACK_DETAILS
+
                                                 repo.play(selectedTrack.uri, contextUri, selectedTrackIndex)
+
+                                                if (targetPlaylist?.id == "favorites_virtual_id") {
+                                                    Log.d(TAG, "Avvio riproduzione Preferiti. Sincronizzo Shuffle SDK a: $isLocalShuffleEnabled")
+                                                    spotifyManager.setShuffle(isLocalShuffleEnabled)
+                                                }
                                             }
                                         }
                                     }
@@ -1119,10 +1148,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onMenuLongClick = {
-                                if (currentScreenState != ScreenState.SETTINGS && currentScreenState != ScreenState.CREDENTIALS_SETUP) {
+                                if (currentScreenState != ScreenState.MAIN_MENU && currentScreenState != ScreenState.CREDENTIALS_SETUP) {
                                     previousScreen = currentScreenState
-                                    selectedSettingsIndex = IPodThemeType.values().indexOf(themeManager.currentTheme)
-                                    currentScreenState = ScreenState.SETTINGS
+                                    currentScreenState = ScreenState.MAIN_MENU
+                                    selectedMainMenuIndex = 0
                                 }
                             },
                             onPlayPauseClick = {
@@ -1137,14 +1166,27 @@ class MainActivity : ComponentActivity() {
                             onNextClick = {
                                 val targetPlaylist = playlists.getOrNull(selectedPlaylistIndex)
                                 if (targetPlaylist?.id == "favorites_virtual_id") {
-                                    if (selectedTrackIndex < tracks.lastIndex) {
-                                        selectedTrackIndex++
+                                    Log.d(TAG, "onNextClick Preferiti: Stato Shuffle Locale = $isLocalShuffleEnabled")
+                                    if (tracks.isNotEmpty()) {
+                                        if (isLocalShuffleEnabled) {
+                                            selectedTrackIndex = (tracks.indices).random()
+                                            Log.d(TAG, "Shuffle attivo! Indice casuale: $selectedTrackIndex")
+                                        } else {
+                                            if (selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
+                                            Log.d(TAG, "Shuffle spento! Prossimo indice: $selectedTrackIndex")
+                                        }
                                         val nextTrack = tracks[selectedTrackIndex]
                                         currentProgressMs = 0L
                                         playingTrackDetails = nextTrack
+
+                                        // 🟢 Riproduci e costringi subito l'SDK a stare spento se lo shuffle locale è false
                                         musicRepository?.play(nextTrack.uri, "")
+                                        if (!isLocalShuffleEnabled) {
+                                            spotifyManager.setShuffle(false)
+                                        }
                                     }
                                 } else {
+                                    // Playlist standard
                                     spotifyManager.skipNext()
                                     if (currentScreenState == ScreenState.TRACKS && selectedTrackIndex < tracks.lastIndex) {
                                         selectedTrackIndex++
@@ -1154,12 +1196,21 @@ class MainActivity : ComponentActivity() {
                             onPreviousClick = {
                                 val targetPlaylist = playlists.getOrNull(selectedPlaylistIndex)
                                 if (targetPlaylist?.id == "favorites_virtual_id") {
-                                    if (selectedTrackIndex > 0) {
-                                        selectedTrackIndex--
+                                    if (tracks.isNotEmpty()) {
+                                        if (isLocalShuffleEnabled) {
+                                            selectedTrackIndex = (tracks.indices).random()
+                                        } else {
+                                            if (selectedTrackIndex > 0) selectedTrackIndex--
+                                        }
                                         val prevTrack = tracks[selectedTrackIndex]
                                         currentProgressMs = 0L
                                         playingTrackDetails = prevTrack
+
+                                        // 🟢 Riproduci e costringi subito l'SDK a stare spento se lo shuffle locale è false
                                         musicRepository?.play(prevTrack.uri, "")
+                                        if (!isLocalShuffleEnabled) {
+                                            spotifyManager.setShuffle(false)
+                                        }
                                     }
                                 } else {
                                     spotifyManager.skipPrevious()
@@ -1175,12 +1226,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 🟢 FUNZIONE HELPER: Incapsula l'avvio standard di Spotify una volta che le credenziali sono pronte
     private fun initializeSpotifyServices() {
         musicRepository = MusicRepository(spotifyManager)
 
         musicRepository?.onTokenExpired = {
-            Log.d("MainActivity", "Token scaduto. Richiedo nuova autenticazione...")
+            Log.d(TAG, "Token scaduto. Richiedo nuova autenticazione...")
             spotifyManager.requestToken(this)
         }
 
@@ -1189,9 +1239,9 @@ class MainActivity : ComponentActivity() {
         }
 
         try {
-            spotifyManager.connect { Log.d("iPodApp", "App Remote connesso!") }
+            spotifyManager.connect { Log.d(TAG, "App Remote connesso!") }
         } catch (e: Exception) {
-            Log.e("iPodApp", "Errore auto-connessione", e)
+            Log.e(TAG, "Errore auto-connessione", e)
         }
     }
 
@@ -1210,9 +1260,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 try {
-                    spotifyManager.connect { Log.d("iPodApp", "Player remoto connesso!") }
+                    spotifyManager.connect { Log.d(TAG, "Player remoto connesso!") }
                 } catch (e: Exception) {
-                    Log.e("iPodApp", "Errore connect", e)
+                    Log.e(TAG, "Errore connect", e)
                 }
             }
         }

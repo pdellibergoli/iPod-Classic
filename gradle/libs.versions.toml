@@ -1,15 +1,16 @@
 [versions]
 agp = "8.5.1"
 kotlin = "1.9.0"
-coreKtx = "1.17.0"
+coreKtx = "1.13.1"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-lifecycleRuntimeKtx = "2.9.4"
+lifecycleRuntimeKtx = "2.8.0"
 activityCompose = "1.11.0"
 composeBom = "2024.04.01"
 appcrawlerPlatform = "0.0.1-alpha03"
-uiTextGoogleFonts = "1.11.3"
+uiTextGoogleFonts = "1.6.8"
+navigationComposeJvmstubs = "2.9.8"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,6 +29,7 @@ androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 appcrawler-platform = { group = "com.google.android.appcrawler", name = "appcrawler-platform", version.ref = "appcrawlerPlatform" }
 androidx-ui-text-google-fonts = { group = "androidx.compose.ui", name = "ui-text-google-fonts", version.ref = "uiTextGoogleFonts" }
+androidx-navigation-compose-jvmstubs = { group = "androidx.navigation", name = "navigation-compose-jvmstubs", version.ref = "navigationComposeJvmstubs" }
 
 [plugins]
 android-application = { id = "com.android.application", version = "8.5.1" }

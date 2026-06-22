@@ -1,5 +1,7 @@
 package com.train.ipodclassicemulator.ui.components
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +27,9 @@ import coil.compose.AsyncImage
 import com.train.ipodclassicemulator.R
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
 import com.train.ipodclassicemulator.ui.theme.IPodTheme
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import kotlinx.coroutines.delay
 
 @Composable
 fun PlayerScreen(
@@ -83,77 +88,80 @@ fun PlayerScreen(
                     .weight(1f)
                     .padding(start = 2.dp),
                 verticalArrangement = Arrangement.Center
+
             ) {
-                // Titolo brano
-                Text(
-                    text = track.name,
-                    color = lcdText,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 17.sp
-                )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 10.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    @Composable
+                    fun AutoScrollText(text: String, fontSize: androidx.compose.ui.unit.TextUnit, isBold: Boolean = false, color: Color) {
+                        val scrollState = rememberScrollState()
 
-                Spacer(modifier = Modifier.height(5.dp))
+                        LaunchedEffect(text) {
+                            delay(1500) // Pausa iniziale
+                            val maxScroll = scrollState.maxValue
+                            if (maxScroll > 0) {
+                                while (true) {
+                                    scrollState.animateScrollTo(maxScroll, animationSpec = tween(4000, easing = LinearEasing))
+                                    delay(2000)
+                                    scrollState.animateScrollTo(0, animationSpec = tween(1000))
+                                    delay(1000)
+                                }
+                            }
+                        }
 
-                // Artista
-                Text(
-                    text = artistName,
-                    color = lcdText.copy(alpha = 0.75f),
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                        Box(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState)) {
+                            Text(
+                                text = text,
+                                color = color,
+                                fontSize = fontSize,
+                                fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
 
-                Spacer(modifier = Modifier.height(2.dp))
+                    // 1. Titolo
+                    AutoScrollText(track.name, 17.sp, true, lcdText)
 
-                //Album
-                Text(
-                    text = track.album?.name ?: "Album Sconosciuto",
-                    color = Color.Gray,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 2.dp),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                    // 2. Artista
+                    Spacer(modifier = Modifier.height(4.dp))
+                    AutoScrollText(track.artists.firstOrNull()?.name ?: "Artista Sconosciuto", 14.sp, false, lcdText)
 
-                Spacer(modifier = Modifier.height(14.dp))
-
+                    // 3. Album
+                    Spacer(modifier = Modifier.height(2.dp))
+                    AutoScrollText(track.album?.name ?: "Album Sconosciuto", 13.sp, false, Color.Gray)
+                }
                 // Cuore + Shuffle
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = onLikeToggle,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = "Preferiti",
-                            tint = if (isLiked) Color(0xFFD32F2F) else lcdText.copy(alpha = 0.55f),
-                            modifier = Modifier.size(22.dp)
-                        )
+                    IconButton(onClick = onLikeToggle, modifier = Modifier.size(35.dp)) {
+                        Icon(if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            null, tint = if (isLiked) Color(0xFFD32F2F) else lcdText.copy(alpha = 0.6f), modifier = Modifier.size(35.dp))
                     }
-                    IconButton(
-                        onClick = onModeToggle,
-                        modifier = Modifier.size(26.dp)
-                    ) {
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    IconButton(onClick = onModeToggle, modifier = Modifier.size(35.dp)) {
                         Icon(
-                            painter = painterResource(
-                                id = if (isShuffleActive) R.drawable.shuffle_on else R.drawable.shuffle_off
-                            ),
-                            contentDescription = if (isShuffleActive) "Shuffle attivo" else "Shuffle disattivato",
-                            tint = if (isShuffleActive) lcdProgressFill else lcdText.copy(alpha = 0.35f),
-                            modifier = Modifier.size(22.dp)
+                            painter = painterResource(id = if (playbackMode == 1) R.drawable.shuffle_on else R.drawable.shuffle_off),
+                            contentDescription = "Shuffle",
+                            tint = if (playbackMode == 1) lcdProgressFill else lcdText.copy(alpha = 0.4f),
+                            modifier = Modifier.size(35.dp)
                         )
                     }
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         // ── PROGRESS BAR ──────────────────────────────────────────────────────
         LinearProgressIndicator(

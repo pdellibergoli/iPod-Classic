@@ -5,8 +5,7 @@ plugins {
 
 android {
     namespace = "com.train.ipodclassicemulator"
-    compileSdk = 34 // 🟢 Rimane a 34, stabile e compatibile con AGP 8.5.1
-
+    compileSdk = 34
     defaultConfig {
         applicationId = "com.train.ipodclassicemulator"
         minSdk = 26
@@ -55,21 +54,29 @@ android {
 configurations.all {
     resolutionStrategy {
         force("com.google.code.findbugs:jsr305:3.0.2")
+        eachDependency {
+            if (requested.group == "androidx.lifecycle") {
+                useVersion("2.8.0")
+            }
+        }
     }
 }
 
 dependencies {
     // Core & Activity
-    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.core:core-ktx:1.13.0")
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     // Jetpack Compose (Gestito centralmente tramite il BOM stabile)
-    implementation(platform(libs.androidx.compose.bom))
+    implementation(platform("androidx.compose:compose-bom:2024.04.01"))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
 
     // Audio & Retrofit Network Pipeline
     implementation("androidx.media3:media3-exoplayer:1.3.0")
@@ -84,6 +91,7 @@ dependencies {
     // 🟢 CORREZIONE: Definiamo esplicitamente una versione compatibile con SDK 34
     // invece di lasciare che prenda l'ultima (1.16.0/1.11.3) che richiedeva SDK 35.
     implementation("androidx.compose.ui:ui-text-google-fonts:1.6.8")
+    implementation(libs.androidx.navigation.compose.jvmstubs)
 
     // Testing standard
     testImplementation(libs.junit)
