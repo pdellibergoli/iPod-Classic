@@ -32,7 +32,7 @@ import java.util.Locale
 fun IPodStatusBar(
     title: String,
     batteryPercent: Int = 100,
-    isCharging: Boolean = false // 🟢 Nuovo parametro per lo stato di carica
+    isCharging: Boolean = false
 ) {
     val colors = IPodTheme.colors
     var currentTime by remember { mutableStateOf(timeNow()) }

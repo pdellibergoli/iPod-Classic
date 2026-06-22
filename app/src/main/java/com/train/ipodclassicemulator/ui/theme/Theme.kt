@@ -4,6 +4,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.material3.Typography
+import androidx.compose.ui.graphics.Color
 
 val LocalIPodColors = compositionLocalOf { IPodPalettes.ClassicWhite }
 
@@ -21,10 +23,19 @@ fun IPodClassicEmulatorTheme(
     themeType: IPodThemeType = IPodThemeType.CLASSIC_WHITE,
     content: @Composable () -> Unit
 ) {
-    val palette = themeType.palette()
-    CompositionLocalProvider(LocalIPodColors provides palette) {
+    // 🟢 Recuperiamo la palette selezionata
+    val basePalette = themeType.palette()
+
+    // 🟢 Forziamo i parametri dello schermo su Bianco e i testi non selezionati su Nero
+    // in modo da eliminare il verdino residuo a livello di engine del tema.
+    val overriddenPalette = basePalette.copy(
+        screenBackground = Color.White,
+        screenText = Color.Black
+    )
+
+    CompositionLocalProvider(LocalIPodColors provides overriddenPalette) {
         MaterialTheme(
-            typography = Typography,
+            typography = IpodTypography,
             content = content
         )
     }

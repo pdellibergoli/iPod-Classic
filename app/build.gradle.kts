@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.train.ipodclassicemulator"
-    compileSdk = 34
+    compileSdk = 34 // 🟢 Rimane a 34, stabile e compatibile con AGP 8.5.1
 
     defaultConfig {
         applicationId = "com.train.ipodclassicemulator"
@@ -45,7 +45,6 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
-            // 🟢 Escludiamo i file di licenza che a volte creano conflitti minori nei jar
             excludes += "META-INF/DEPENDENCIES"
             excludes += "META-INF/LICENSE*"
             excludes += "META-INF/NOTICE*"
@@ -53,7 +52,6 @@ android {
     }
 }
 
-// 🟢 Risoluzione drastica dei conflitti sui metadati nascosti (forziamo jsr305)
 configurations.all {
     resolutionStrategy {
         force("com.google.code.findbugs:jsr305:3.0.2")
@@ -66,7 +64,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
-    // Jetpack Compose (Gestito centralmente tramite il BOM)
+    // Jetpack Compose (Gestito centralmente tramite il BOM stabile)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
@@ -82,6 +80,10 @@ dependencies {
 
     // Immagini Copertine Reali
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // 🟢 CORREZIONE: Definiamo esplicitamente una versione compatibile con SDK 34
+    // invece di lasciare che prenda l'ultima (1.16.0/1.11.3) che richiedeva SDK 35.
+    implementation("androidx.compose.ui:ui-text-google-fonts:1.6.8")
 
     // Testing standard
     testImplementation(libs.junit)

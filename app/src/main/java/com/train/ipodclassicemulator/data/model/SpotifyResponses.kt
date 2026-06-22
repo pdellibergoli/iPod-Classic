@@ -17,7 +17,8 @@ data class PlaylistItem(
     val id: String,
     val name: String,
     val uri: String,
-    val tracks: PlaylistTracksInfo
+    val tracks: PlaylistTracksInfo,
+    val images: List<SpotifyImage>?
 )
 
 data class PlaylistTracksInfo(
@@ -38,7 +39,8 @@ data class SpotifyTrackDetails(
     val id: String,
     val name: String,
     val uri: String,
-    val artists: List<SpotifyArtistInfo>
+    val artists: List<SpotifyArtistInfo>,
+    val album: SpotifyAlbumModelInfo? = null
 )
 
 data class SpotifyArtistInfo(
@@ -62,10 +64,18 @@ data class SpotifyAlbumItem(
     val album: SpotifyAlbumDetails
 )
 
+data class SpotifyImage(
+    val url: String,
+    val height: Int?,
+    val width: Int?
+)
+
 data class SpotifyAlbumDetails(
     val id: String,
     val name: String,
-    val uri: String
+    val uri: String,
+    val images: List<SpotifyImage>?,
+    val artists: List<SpotifyArtistInfo>?
 )
 
 // 📦 MODELLI WRAPPER PER GLI ARTISTI SEGUITI
@@ -80,7 +90,8 @@ data class SpotifyArtistsContainer(
 data class SpotifyArtistDetails(
     val id: String,
     val name: String,
-    val uri: String
+    val uri: String,
+    val images: List<SpotifyImage>?
 )
 
 data class SpotifyArtistTopTracksResponse(
@@ -91,15 +102,26 @@ data class SpotifyArtistTrackModel(
     val id: String,
     val name: String,
     val uri: String,
-    val artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistInfo>
+    val artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistInfo>,
+    val album: SpotifyAlbumModelInfo?
 )
 
 // 📦 MODELLI DI RISPOSTA PER GLI ALBUM
 data class SpotifySavedAlbumItem(val album: SpotifyAlbumModelInfo)
-data class SpotifyAlbumModelInfo(val id: String, val name: String, val uri: String)
+data class SpotifyAlbumModelInfo(
+    val id: String,
+    val name: String,
+    val uri: String,
+    val images: List<SpotifyImage>? = null
+)
 
 // 📦 MODELLI DI RISPOSTA PER GLI ARTISTI
-data class SpotifyArtistModelInfo(val id: String, val name: String, val uri: String)
+data class SpotifyArtistModelInfo(
+    val id: String,
+    val name: String,
+    val uri: String,
+    val images: List<SpotifyImage>? = null
+)
 
 // 📦 MODELLI DI RISPOSTA PER LE TRACCE SEMPLIFICATE DELL'ALBUM
 data class SpotifyAlbumTracksResponse(val items: List<SpotifySimplifiedTrack>)

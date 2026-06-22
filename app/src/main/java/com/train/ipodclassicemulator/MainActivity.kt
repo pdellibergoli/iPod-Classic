@@ -17,7 +17,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.spotify.protocol.types.PlayerState
 import com.spotify.protocol.types.Track
+import com.train.ipodclassicemulator.ui.theme.MontserratFontFamily
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
@@ -82,59 +86,19 @@ class MainActivity : ComponentActivity() {
                 var selectedArtistIndex by remember { mutableStateOf(0) }
 
                 var albums: List<com.train.ipodclassicemulator.data.model.SpotifyAlbumDetails> by remember {
-                    mutableStateOf(
-                        emptyList()
-                    )
+                    mutableStateOf(emptyList())
                 }
                 var artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistDetails> by remember {
-                    mutableStateOf(
-                        emptyList()
-                    )
+                    mutableStateOf(emptyList())
                 }
                 var playlists: List<PlaylistItem> by remember { mutableStateOf(emptyList()) }
                 var tracks: List<SpotifyTrackDetails> by remember { mutableStateOf(emptyList()) }
 
                 val keyboardChars = remember {
                     listOf(
-                        "_",
-                        "A",
-                        "B",
-                        "C",
-                        "D",
-                        "E",
-                        "F",
-                        "G",
-                        "H",
-                        "I",
-                        "J",
-                        "K",
-                        "L",
-                        "M",
-                        "N",
-                        "O",
-                        "P",
-                        "Q",
-                        "R",
-                        "S",
-                        "T",
-                        "U",
-                        "V",
-                        "W",
-                        "X",
-                        "Y",
-                        "Z",
-                        "0",
-                        "1",
-                        "2",
-                        "3",
-                        "4",
-                        "5",
-                        "6",
-                        "7",
-                        "8",
-                        "9",
-                        "⌫",
-                        "🔍 OK"
+                        "_", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+                        "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+                        "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "🔍 OK"
                     )
                 }
                 var selectedCharIndex by remember { mutableStateOf(1) }
@@ -159,9 +123,7 @@ class MainActivity : ComponentActivity() {
                 var selectedPlaylistIndex by remember { mutableStateOf(0) }
                 var selectedTrackIndex by remember { mutableStateOf(0) }
                 var selectedSettingsIndex by remember {
-                    mutableStateOf(
-                        IPodThemeType.values().indexOf(themeManager.currentTheme)
-                    )
+                    mutableStateOf(IPodThemeType.values().indexOf(themeManager.currentTheme))
                 }
 
                 var statusText by remember { mutableStateOf("In attesa di Spotify...") }
@@ -188,45 +150,32 @@ class MainActivity : ComponentActivity() {
                             intent: android.content.Intent?
                         ) {
                             intent?.let {
-                                val level =
-                                    it.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
-                                val scale =
-                                    it.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
+                                val level = it.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+                                val scale = it.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1)
                                 if (level != -1 && scale != -1) {
                                     batteryPercentage = (level * 100 / scale.toFloat()).toInt()
                                 }
-                                val status =
-                                    it.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
-                                isBatteryCharging =
-                                    status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                                val status = it.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+                                isBatteryCharging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
                             }
                         }
                     }
-                    val filter =
-                        android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+                    val filter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
                     context.registerReceiver(batteryReceiver, filter)
                     onDispose { context.unregisterReceiver(batteryReceiver) }
                 }
 
                 LaunchedEffect(selectedMainMenuIndex, currentScreenState) {
-                    if (currentScreenState == ScreenState.MAIN_MENU) mainMenuLazyListState.scrollToKeepSelectedVisible(
-                        selectedMainMenuIndex
-                    )
+                    if (currentScreenState == ScreenState.MAIN_MENU) mainMenuLazyListState.scrollToKeepSelectedVisible(selectedMainMenuIndex)
                 }
                 LaunchedEffect(selectedSpotifyMenuIndex, currentScreenState) {
-                    if (currentScreenState == ScreenState.SPOTIFY_MENU) spotifyMenuLazyListState.scrollToKeepSelectedVisible(
-                        selectedSpotifyMenuIndex
-                    )
+                    if (currentScreenState == ScreenState.SPOTIFY_MENU) spotifyMenuLazyListState.scrollToKeepSelectedVisible(selectedSpotifyMenuIndex)
                 }
                 LaunchedEffect(selectedAlbumIndex, currentScreenState) {
-                    if (currentScreenState == ScreenState.ALBUMS) albumLazyListState.scrollToKeepSelectedVisible(
-                        selectedAlbumIndex
-                    )
+                    if (currentScreenState == ScreenState.ALBUMS) albumLazyListState.scrollToKeepSelectedVisible(selectedAlbumIndex)
                 }
                 LaunchedEffect(selectedArtistIndex, currentScreenState) {
-                    if (currentScreenState == ScreenState.ARTISTS) artistLazyListState.scrollToKeepSelectedVisible(
-                        selectedArtistIndex
-                    )
+                    if (currentScreenState == ScreenState.ARTISTS) artistLazyListState.scrollToKeepSelectedVisible(selectedArtistIndex)
                 }
 
                 LaunchedEffect(musicRepository) {
@@ -303,10 +252,8 @@ class MainActivity : ComponentActivity() {
                                 id = "favorites_virtual_id",
                                 name = "❤️ I miei Preferiti",
                                 uri = "",
-                                tracks = com.train.ipodclassicemulator.data.model.PlaylistTracksInfo(
-                                    "",
-                                    0
-                                )
+                                tracks = com.train.ipodclassicemulator.data.model.PlaylistTracksInfo("", 0),
+                                images = null
                             )
                             playlists = listOf(virtualFavorites) + remotePlaylists
                         }
@@ -346,14 +293,7 @@ class MainActivity : ComponentActivity() {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(
-                                        colors.bodyPrimary,
-                                        colors.bodySecondary
-                                    )
-                                )
-                            )
+                            .background(Brush.verticalGradient(listOf(colors.bodyPrimary, colors.bodySecondary)))
                             .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.SpaceBetween
@@ -361,7 +301,7 @@ class MainActivity : ComponentActivity() {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(240.dp)
+                                .height(450.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(colors.bodyEdge)
                                 .padding(3.dp)
@@ -381,11 +321,7 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         CircularProgressIndicator(color = colors.screenAccent)
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = statusText,
-                                            color = colors.screenText,
-                                            fontSize = 14.sp
-                                        )
+                                        Text(text = statusText, color = colors.screenText, fontSize = 14.sp)
                                     }
                                 } else {
                                     when (currentScreenState) {
@@ -394,7 +330,8 @@ class MainActivity : ComponentActivity() {
                                                 IPodStatusBar(
                                                     title = "iPod",
                                                     batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
+                                                    isCharging = isBatteryCharging,
+                                                    isMusicPlaying = isTrackPlaying
                                                 )
                                                 Spacer(modifier = Modifier.height(4.dp))
                                                 LazyColumn(
@@ -402,16 +339,12 @@ class MainActivity : ComponentActivity() {
                                                     modifier = Modifier.fillMaxWidth().weight(1f)
                                                 ) {
                                                     itemsIndexed(mainMenuOptions) { index, option ->
-                                                        val isSelected =
-                                                            index == selectedMainMenuIndex
+                                                        val isSelected = index == selectedMainMenuIndex
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
                                                                 .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
-                                                                ),
+                                                                .padding(horizontal = 6.dp, vertical = 5.dp),
                                                             horizontalArrangement = Arrangement.SpaceBetween
                                                         ) {
                                                             Text(
@@ -423,9 +356,7 @@ class MainActivity : ComponentActivity() {
                                                             Text(
                                                                 text = "›",
                                                                 fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(
-                                                                    alpha = 0.5f
-                                                                )
+                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(alpha = 0.5f)
                                                             )
                                                         }
                                                     }
@@ -438,7 +369,8 @@ class MainActivity : ComponentActivity() {
                                                 IPodStatusBar(
                                                     title = "Spotify",
                                                     batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
+                                                    isCharging = isBatteryCharging,
+                                                    isMusicPlaying = isTrackPlaying
                                                 )
                                                 Spacer(modifier = Modifier.height(4.dp))
                                                 LazyColumn(
@@ -446,16 +378,12 @@ class MainActivity : ComponentActivity() {
                                                     modifier = Modifier.fillMaxWidth().weight(1f)
                                                 ) {
                                                     itemsIndexed(spotifyMenuOptions) { index, option ->
-                                                        val isSelected =
-                                                            index == selectedSpotifyMenuIndex
+                                                        val isSelected = index == selectedSpotifyMenuIndex
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
                                                                 .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
-                                                                ),
+                                                                .padding(horizontal = 6.dp, vertical = 5.dp),
                                                             horizontalArrangement = Arrangement.SpaceBetween
                                                         ) {
                                                             Text(
@@ -467,9 +395,7 @@ class MainActivity : ComponentActivity() {
                                                             Text(
                                                                 text = "›",
                                                                 fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(
-                                                                    alpha = 0.5f
-                                                                )
+                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(alpha = 0.5f)
                                                             )
                                                         }
                                                     }
@@ -479,40 +405,94 @@ class MainActivity : ComponentActivity() {
 
                                         ScreenState.PLAYLISTS -> {
                                             Column(modifier = Modifier.fillMaxSize()) {
-                                                IPodStatusBar(
-                                                    title = "Playlist",
-                                                    batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
-                                                )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                LazyColumn(
-                                                    state = playlistLazyListState,
-                                                    modifier = Modifier.fillMaxWidth().weight(1f)
-                                                ) {
+                                                IPodStatusBar(title = "Playlist", batteryPercent = batteryPercentage, isCharging = isBatteryCharging, isMusicPlaying = isTrackPlaying)
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                LazyColumn(state = playlistLazyListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                                                     itemsIndexed(playlists) { index, playlist ->
-                                                        val isSelected =
-                                                            index == selectedPlaylistIndex
+                                                        val isSelected = index == selectedPlaylistIndex
+
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
-                                                                ),
-                                                            horizontalArrangement = Arrangement.SpaceBetween
+                                                                .background(
+                                                                    if (isSelected) {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFF0088F8), Color(0xFF0055E0)))
+                                                                    } else {
+                                                                        Brush.verticalGradient(colors = listOf(Color.White, Color.White))
+                                                                    }
+                                                                )
+                                                                .drawBehind {
+                                                                    if (!isSelected) {
+                                                                        val strokeWidth = 0.5.dp.toPx()
+                                                                        val y = size.height - strokeWidth / 2
+                                                                        drawLine(
+                                                                            color = Color(0xFFE5E5EA),
+                                                                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                                                                            end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                                                            strokeWidth = strokeWidth
+                                                                        )
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            Text(
-                                                                text = playlist.name,
-                                                                fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText
-                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(42.dp)
+                                                                    .clip(RoundedCornerShape(4.dp))
+                                                                    .background(Color.LightGray)
+                                                            ) {
+                                                                val isFavorites = playlist.id == "favorites_virtual_id"
+                                                                val playlistCoverUrl = playlist.images?.firstOrNull()?.url
+                                                                coil.compose.AsyncImage(
+                                                                    model = if (playlist.id == "favorites_virtual_id") {
+                                                                        R.mipmap.liked_songs
+                                                                    } else {
+                                                                        playlistCoverUrl ?: "https://picsum.photos/100"
+                                                                    },
+                                                                    contentDescription = null,
+                                                                    modifier = Modifier
+                                                                        .fillMaxSize()
+                                                                        .then(
+                                                                            if (isFavorites) {
+                                                                                Modifier.scale(1.3f)
+                                                                            } else {
+                                                                                Modifier
+                                                                            }
+                                                                        ),
+                                                                    contentScale = if (isFavorites) {
+                                                                        androidx.compose.ui.layout.ContentScale.Fit
+                                                                    } else {
+                                                                        androidx.compose.ui.layout.ContentScale.Crop
+                                                                    }
+                                                                )
+                                                            }
+
+                                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                // 🟢 RISOLTO: Reinserito il tag Text corretto
+                                                                Text(
+                                                                    text = playlist.name,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 15.sp,
+                                                                    color = if (isSelected) Color.White else Color.Black
+                                                                )
+                                                                Text(
+                                                                    text = "Spotify Playlist",
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontSize = 12.sp,
+                                                                    color = if (isSelected) Color.White.copy(alpha = 0.7f) else Color.Gray
+                                                                )
+                                                            }
+
                                                             Text(
                                                                 text = "›",
-                                                                fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(
-                                                                    alpha = 0.5f
-                                                                )
+                                                                fontFamily = MontserratFontFamily,
+                                                                fontSize = 20.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = if (isSelected) Color.White else Color.LightGray
                                                             )
                                                         }
                                                     }
@@ -522,32 +502,71 @@ class MainActivity : ComponentActivity() {
 
                                         ScreenState.ALBUMS -> {
                                             Column(modifier = Modifier.fillMaxSize()) {
-                                                IPodStatusBar(
-                                                    title = "Album",
-                                                    batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
-                                                )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                LazyColumn(
-                                                    state = albumLazyListState,
-                                                    modifier = Modifier.fillMaxWidth().weight(1f)
-                                                ) {
+                                                IPodStatusBar(title = "Album", batteryPercent = batteryPercentage, isCharging = isBatteryCharging, isMusicPlaying = isTrackPlaying)
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                LazyColumn(state = albumLazyListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                                                     itemsIndexed(albums) { index, album ->
                                                         val isSelected = index == selectedAlbumIndex
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
+                                                                .background(
+                                                                    if (isSelected) {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFF0088F8), Color(0xFF0055E0)))
+                                                                    } else {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFFFFFFFF), Color(0xFFF9F9F9)))
+                                                                    }
                                                                 )
+                                                                .drawBehind {
+                                                                    if (!isSelected) {
+                                                                        val strokeWidth = 0.5.dp.toPx()
+                                                                        val y = size.height - strokeWidth / 2
+                                                                        drawLine(
+                                                                            color = Color(0xFFE5E5EA),
+                                                                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                                                                            end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                                                            strokeWidth = strokeWidth
+                                                                        )
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            Text(
-                                                                text = album.name,
-                                                                fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText
-                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(42.dp)
+                                                                    .clip(RoundedCornerShape(4.dp))
+                                                                    .background(Color.LightGray)
+                                                            ) {
+                                                                val coverUrl = album.images?.firstOrNull()?.url
+                                                                if (!coverUrl.isNullOrEmpty()) {
+                                                                    coil.compose.AsyncImage(
+                                                                        model = coverUrl,
+                                                                        contentDescription = null,
+                                                                        modifier = Modifier.fillMaxSize(),
+                                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = album.name,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 15.sp,
+                                                                    color = if (isSelected) Color.White else Color.Black
+                                                                )
+                                                                val artistName = album.artists?.firstOrNull()?.name ?: "Artista sconosciuto"
+                                                                Text(
+                                                                    text = artistName,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontSize = 12.sp,
+                                                                    color = if (isSelected) Color.White.copy(alpha = 0.7f) else Color.Gray
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -556,33 +575,70 @@ class MainActivity : ComponentActivity() {
 
                                         ScreenState.ARTISTS -> {
                                             Column(modifier = Modifier.fillMaxSize()) {
-                                                IPodStatusBar(
-                                                    title = "Artisti",
-                                                    batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
-                                                )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                LazyColumn(
-                                                    state = artistLazyListState,
-                                                    modifier = Modifier.fillMaxWidth().weight(1f)
-                                                ) {
+                                                IPodStatusBar(title = "Artisti", batteryPercent = batteryPercentage, isCharging = isBatteryCharging, isMusicPlaying = isTrackPlaying)
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                LazyColumn(state = artistLazyListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                                                     itemsIndexed(artists) { index, artist ->
-                                                        val isSelected =
-                                                            index == selectedArtistIndex
+                                                        val isSelected = index == selectedArtistIndex
                                                         Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
+                                                                .background(
+                                                                    if (isSelected) {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFF0088F8), Color(0xFF0055E0)))
+                                                                    } else {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFFFFFFFF), Color(0xFFF9F9F9)))
+                                                                    }
                                                                 )
+                                                                .drawBehind {
+                                                                    if (!isSelected) {
+                                                                        val strokeWidth = 0.5.dp.toPx()
+                                                                        val y = size.height - strokeWidth / 2
+                                                                        drawLine(
+                                                                            color = Color(0xFFE5E5EA),
+                                                                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                                                                            end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                                                            strokeWidth = strokeWidth
+                                                                        )
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
                                                         ) {
-                                                            Text(
-                                                                text = artist.name,
-                                                                fontSize = 16.sp,
-                                                                color = if (isSelected) colors.screenSelectedText else colors.screenText
-                                                            )
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(42.dp)
+                                                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                                                    .background(Color.LightGray)
+                                                            ) {
+                                                                val artistImageUrl = artist.images?.firstOrNull()?.url
+                                                                if (!artistImageUrl.isNullOrEmpty()) {
+                                                                    coil.compose.AsyncImage(
+                                                                        model = artistImageUrl,
+                                                                        contentDescription = null,
+                                                                        modifier = Modifier.fillMaxSize(),
+                                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                                                    )
+                                                                }
+                                                            }
+
+                                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = artist.name,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 15.sp,
+                                                                    color = if (isSelected) Color.White else Color.Black
+                                                                )
+                                                                Text(
+                                                                    text = "Artista aggiunto",
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontSize = 12.sp,
+                                                                    color = if (isSelected) Color.White.copy(alpha = 0.7f) else Color.Gray
+                                                                )
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -594,7 +650,8 @@ class MainActivity : ComponentActivity() {
                                                 IPodStatusBar(
                                                     title = "Ricerca",
                                                     batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
+                                                    isCharging = isBatteryCharging,
+                                                    isMusicPlaying = isTrackPlaying
                                                 )
                                                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -610,28 +667,22 @@ class MainActivity : ComponentActivity() {
                                                         text = if (searchQuery.isEmpty()) "Inserisci testo..." else searchQuery,
                                                         fontSize = 16.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = if (searchQuery.isEmpty()) colors.screenText.copy(
-                                                            alpha = 0.4f
-                                                        ) else colors.screenText
+                                                        color = if (searchQuery.isEmpty()) colors.screenText.copy(alpha = 0.4f) else colors.screenText
                                                     )
                                                 }
                                                 Spacer(modifier = Modifier.height(14.dp))
 
                                                 Box(
-                                                    modifier = Modifier.fillMaxWidth()
-                                                        .height(50.dp),
+                                                    modifier = Modifier.fillMaxWidth().height(50.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Row(
                                                         verticalAlignment = Alignment.CenterVertically,
                                                         horizontalArrangement = Arrangement.Center
                                                     ) {
-                                                        val prevChar =
-                                                            keyboardChars[(selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size]
-                                                        val currentChar =
-                                                            keyboardChars[selectedCharIndex]
-                                                        val nextChar =
-                                                            keyboardChars[(selectedCharIndex + 1) % keyboardChars.size]
+                                                        val prevChar = keyboardChars[(selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size]
+                                                        val currentChar = keyboardChars[selectedCharIndex]
+                                                        val nextChar = keyboardChars[(selectedCharIndex + 1) % keyboardChars.size]
 
                                                         Text(
                                                             text = prevChar,
@@ -647,10 +698,7 @@ class MainActivity : ComponentActivity() {
                                                             color = colors.screenSelectedText,
                                                             modifier = Modifier
                                                                 .weight(1.5f)
-                                                                .background(
-                                                                    colors.screenSelectedBg,
-                                                                    RoundedCornerShape(4.dp)
-                                                                )
+                                                                .background(colors.screenSelectedBg, RoundedCornerShape(4.dp))
                                                                 .padding(vertical = 4.dp),
                                                             textAlign = TextAlign.Center
                                                         )
@@ -679,29 +727,79 @@ class MainActivity : ComponentActivity() {
                                                 IPodStatusBar(
                                                     title = "Brani",
                                                     batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
+                                                    isCharging = isBatteryCharging,
+                                                    isMusicPlaying = isTrackPlaying
                                                 )
+                                                Spacer(modifier = Modifier.height(2.dp))
                                                 LazyColumn(
                                                     state = trackLazyListState,
                                                     modifier = Modifier.fillMaxWidth().weight(1f)
                                                 ) {
                                                     itemsIndexed(tracks) { index, track ->
                                                         val isSelected = index == selectedTrackIndex
-                                                        val artistName =
-                                                            track.artists.firstOrNull()?.name
-                                                                ?: "Unknown"
-                                                        Text(
-                                                            text = "${track.name} - $artistName",
-                                                            fontSize = 15.sp,
-                                                            color = if (isSelected) colors.screenSelectedText else colors.screenText,
+                                                        val artistName = track.artists.firstOrNull()?.name ?: "Unknown"
+
+                                                        Row(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .background(if (isSelected) colors.screenSelectedBg else colors.screenBackground)
-                                                                .padding(
-                                                                    horizontal = 6.dp,
-                                                                    vertical = 5.dp
+                                                                .background(
+                                                                    if (isSelected) {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFF0088F8), Color(0xFF0055E0)))
+                                                                    } else {
+                                                                        Brush.verticalGradient(colors = listOf(Color(0xFFFFFFFF), Color(0xFFF9F9F9)))
+                                                                    }
                                                                 )
-                                                        )
+                                                                .drawBehind {
+                                                                    if (!isSelected) {
+                                                                        val strokeWidth = 0.5.dp.toPx()
+                                                                        val y = size.height - strokeWidth / 2
+                                                                        drawLine(
+                                                                            color = Color(0xFFE5E5EA),
+                                                                            start = androidx.compose.ui.geometry.Offset(0f, y),
+                                                                            end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                                                            strokeWidth = strokeWidth
+                                                                        )
+                                                                    }
+                                                                }
+                                                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            // 🟢 Copertina quadrata del brano (estratta dall'album di appartenenza)
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(42.dp)
+                                                                    .clip(RoundedCornerShape(4.dp))
+                                                                    .background(Color.LightGray)
+                                                            ) {
+                                                                // Spotify tipicamente inserisce le immagini all'interno dell'oggetto album del brano
+                                                                val trackCoverUrl = track.album?.images?.firstOrNull()?.url
+
+                                                                coil.compose.AsyncImage(
+                                                                    model = trackCoverUrl ?: "https://picsum.photos/100", // Fallback se non trova la cover
+                                                                    contentDescription = null,
+                                                                    modifier = Modifier.fillMaxSize(),
+                                                                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                                                )
+                                                            }
+
+                                                            Spacer(modifier = Modifier.width(10.dp))
+
+                                                            Column(modifier = Modifier.weight(1f)) {
+                                                                Text(
+                                                                    text = track.name,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    fontSize = 15.sp,
+                                                                    color = if (isSelected) Color.White else Color.Black
+                                                                )
+                                                                Text(
+                                                                    text = artistName,
+                                                                    fontFamily = MontserratFontFamily,
+                                                                    fontSize = 12.sp,
+                                                                    color = if (isSelected) Color.White.copy(alpha = 0.7f) else Color.Gray
+                                                                )
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
@@ -713,7 +811,8 @@ class MainActivity : ComponentActivity() {
                                                     IPodStatusBar(
                                                         title = "Now Playing",
                                                         batteryPercent = batteryPercentage,
-                                                        isCharging = isBatteryCharging
+                                                        isCharging = isBatteryCharging,
+                                                        isMusicPlaying = isTrackPlaying
                                                     )
                                                     Box(modifier = Modifier.weight(1f)) {
                                                         PlayerScreen(
@@ -727,37 +826,28 @@ class MainActivity : ComponentActivity() {
                                                                 musicRepository?.let { repo ->
                                                                     lifecycleScope.launch {
                                                                         if (isCurrentTrackLiked) {
-                                                                            val success =
-                                                                                repo.removeSpotifyTrack(
-                                                                                    track.id
-                                                                                )
-                                                                            if (success) isCurrentTrackLiked =
-                                                                                false
+                                                                            val success = repo.removeSpotifyTrack(track.id)
+                                                                            if (success) isCurrentTrackLiked = false
                                                                         } else {
-                                                                            val success =
-                                                                                repo.saveSpotifyTrack(
-                                                                                    track.id
-                                                                                )
-                                                                            if (success) isCurrentTrackLiked =
-                                                                                true
+                                                                            val success = repo.saveSpotifyTrack(track.id)
+                                                                            if (success) isCurrentTrackLiked = true
                                                                         }
                                                                     }
                                                                 }
                                                             },
                                                             onModeToggle = {
                                                                 musicRepository?.let { repo ->
-                                                                    // Cicla linearmente su 2 stati: 0 = Off, 1 = Std
                                                                     val nextMode = (currentPlaybackMode + 1) % 2
                                                                     currentPlaybackMode = nextMode
 
                                                                     when (nextMode) {
-                                                                        0 -> { // ➡️ SHUFFLE DISATTIVATO
+                                                                        0 -> {
                                                                             spotifyManager.setShuffle(false)
                                                                             lifecycleScope.launch {
                                                                                 repo.setSpotifyShuffleMode(false)
                                                                             }
                                                                         }
-                                                                        1 -> { // 🔀 SHUFFLE STANDARD
+                                                                        1 -> {
                                                                             spotifyManager.setShuffle(true)
                                                                             lifecycleScope.launch {
                                                                                 repo.setSpotifyShuffleMode(true)
@@ -777,7 +867,8 @@ class MainActivity : ComponentActivity() {
                                                 IPodStatusBar(
                                                     title = "Impostazioni",
                                                     batteryPercent = batteryPercentage,
-                                                    isCharging = isBatteryCharging
+                                                    isCharging = isBatteryCharging,
+                                                    isMusicPlaying = isTrackPlaying
                                                 )
                                                 Box(modifier = Modifier.weight(1f)) {
                                                     SettingsScreen(
@@ -789,7 +880,8 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
 
-                                        else -> { /* No-op */
+                                        ScreenState.CREDENTIALS_SETUP -> {
+                                            Box(modifier = Modifier.fillMaxSize())
                                         }
                                     }
                                 }
@@ -810,13 +902,9 @@ class MainActivity : ComponentActivity() {
                                         val themeCount = IPodThemeType.values().size
                                         if (selectedSettingsIndex < themeCount - 1) selectedSettingsIndex++
                                     }
-
                                     ScreenState.TRACK_DETAILS -> spotifyManager.adjustVolume(up = true)
-                                    ScreenState.SEARCH -> selectedCharIndex =
-                                        (selectedCharIndex + 1) % keyboardChars.size
-
-                                    else -> { /* No-op */
-                                    }
+                                    ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex + 1) % keyboardChars.size
+                                    else -> { /* No-op */ }
                                 }
                             },
                             onScrollPrevious = {
@@ -829,11 +917,8 @@ class MainActivity : ComponentActivity() {
                                     ScreenState.TRACKS -> if (selectedTrackIndex > 0) selectedTrackIndex--
                                     ScreenState.SETTINGS -> if (selectedSettingsIndex > 0) selectedSettingsIndex--
                                     ScreenState.TRACK_DETAILS -> spotifyManager.adjustVolume(up = false)
-                                    ScreenState.SEARCH -> selectedCharIndex =
-                                        (selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size
-
-                                    else -> { /* No-op */
-                                    }
+                                    ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size
+                                    else -> { /* No-op */ }
                                 }
                             },
                             onSelectClick = {
@@ -849,15 +934,12 @@ class MainActivity : ComponentActivity() {
                                                         selectedTrackIndex = randomIndex
                                                         playingTrackDetails = tracks[randomIndex]
                                                         currentProgressMs = 0L
-                                                        currentScreenState =
-                                                            ScreenState.TRACK_DETAILS
+                                                        currentScreenState = ScreenState.TRACK_DETAILS
                                                         repo.play(tracks[randomIndex].uri, "")
                                                     }
                                                 }
                                             }
-
-                                            3 -> if (playingTrackDetails != null) currentScreenState =
-                                                ScreenState.TRACK_DETAILS
+                                            3 -> if (playingTrackDetails != null) currentScreenState = ScreenState.TRACK_DETAILS
                                         }
                                     }
 
@@ -870,28 +952,22 @@ class MainActivity : ComponentActivity() {
                                                         isLoading = true
                                                         statusText = "Scarico Playlist..."
                                                         lifecycleScope.launch {
-                                                            val remotePlaylists =
-                                                                repo.getUserPlaylists()
+                                                            val remotePlaylists = repo.getUserPlaylists()
                                                             val virtualFavorites = PlaylistItem(
                                                                 id = "favorites_virtual_id",
                                                                 name = "❤️ I miei Preferiti",
                                                                 uri = "",
-                                                                tracks = com.train.ipodclassicemulator.data.model.PlaylistTracksInfo(
-                                                                    "",
-                                                                    0
-                                                                )
+                                                                tracks = com.train.ipodclassicemulator.data.model.PlaylistTracksInfo("", 0),
+                                                                images = null
                                                             )
-                                                            playlists =
-                                                                listOf(virtualFavorites) + remotePlaylists
-                                                            currentScreenState =
-                                                                ScreenState.PLAYLISTS
+                                                            playlists = listOf(virtualFavorites) + remotePlaylists
+                                                            currentScreenState = ScreenState.PLAYLISTS
                                                             isLoading = false
                                                         }
                                                     } else {
                                                         currentScreenState = ScreenState.PLAYLISTS
                                                     }
                                                 }
-
                                                 1 -> {
                                                     if (albums.isEmpty()) {
                                                         isLoading = true
@@ -906,7 +982,6 @@ class MainActivity : ComponentActivity() {
                                                         currentScreenState = ScreenState.ALBUMS
                                                     }
                                                 }
-
                                                 2 -> {
                                                     if (artists.isEmpty()) {
                                                         isLoading = true
@@ -921,7 +996,6 @@ class MainActivity : ComponentActivity() {
                                                         currentScreenState = ScreenState.ARTISTS
                                                     }
                                                 }
-
                                                 3 -> {
                                                     searchQuery = ""
                                                     currentScreenState = ScreenState.SEARCH
@@ -933,9 +1007,7 @@ class MainActivity : ComponentActivity() {
                                     ScreenState.SEARCH -> {
                                         val chosenChar = keyboardChars[selectedCharIndex]
                                         when (chosenChar) {
-                                            "⌫" -> if (searchQuery.isNotEmpty()) searchQuery =
-                                                searchQuery.dropLast(1)
-
+                                            "⌫" -> if (searchQuery.isNotEmpty()) searchQuery = searchQuery.dropLast(1)
                                             "_" -> searchQuery += " "
                                             "🔍 OK" -> {
                                                 musicRepository?.let { repo ->
@@ -943,8 +1015,7 @@ class MainActivity : ComponentActivity() {
                                                         isLoading = true
                                                         statusText = "Ricerca in corso..."
                                                         lifecycleScope.launch {
-                                                            tracks =
-                                                                repo.searchSpotifyTracks(searchQuery)
+                                                            tracks = repo.searchSpotifyTracks(searchQuery)
                                                             selectedTrackIndex = 0
                                                             currentScreenState = ScreenState.TRACKS
                                                             isLoading = false
@@ -952,7 +1023,6 @@ class MainActivity : ComponentActivity() {
                                                     }
                                                 }
                                             }
-
                                             else -> searchQuery += chosenChar
                                         }
                                     }
@@ -964,7 +1034,7 @@ class MainActivity : ComponentActivity() {
                                                 isLoading = true
                                                 statusText = "Carico brani album..."
                                                 lifecycleScope.launch {
-                                                    tracks = repo.getTracksForAlbum(targetAlbum.id)
+                                                    tracks = repo.getTracksForAlbum(targetAlbum.id, targetAlbum.images)
                                                     selectedTrackIndex = 0
                                                     currentScreenState = ScreenState.TRACKS
                                                     isLoading = false
@@ -980,8 +1050,7 @@ class MainActivity : ComponentActivity() {
                                                 isLoading = true
                                                 statusText = "Carico brani artista..."
                                                 lifecycleScope.launch {
-                                                    tracks =
-                                                        repo.getTracksForArtist(targetArtist.id)
+                                                    tracks = repo.getTracksForArtist(targetArtist.id, targetArtist.images)
                                                     selectedTrackIndex = 0
                                                     currentScreenState = ScreenState.TRACKS
                                                     isLoading = false
@@ -993,17 +1062,15 @@ class MainActivity : ComponentActivity() {
                                     ScreenState.PLAYLISTS -> {
                                         musicRepository?.let { repo ->
                                             if (playlists.isNotEmpty()) {
-                                                val targetPlaylist =
-                                                    playlists[selectedPlaylistIndex]
+                                                val targetPlaylist = playlists[selectedPlaylistIndex]
                                                 isLoading = true
                                                 statusText = "Carico i brani..."
                                                 lifecycleScope.launch {
-                                                    tracks =
-                                                        if (targetPlaylist.id == "favorites_virtual_id") {
-                                                            repo.getSavedTracks()
-                                                        } else {
-                                                            repo.getTracksForPlaylist(targetPlaylist.id)
-                                                        }
+                                                    tracks = if (targetPlaylist.id == "favorites_virtual_id") {
+                                                        repo.getSavedTracks()
+                                                    } else {
+                                                        repo.getTracksForPlaylist(targetPlaylist.id)
+                                                    }
                                                     selectedTrackIndex = 0
                                                     currentScreenState = ScreenState.TRACKS
                                                     isLoading = false
@@ -1016,39 +1083,27 @@ class MainActivity : ComponentActivity() {
                                         musicRepository?.let { repo ->
                                             if (tracks.isNotEmpty()) {
                                                 val selectedTrack = tracks[selectedTrackIndex]
-                                                val targetPlaylist =
-                                                    playlists.getOrNull(selectedPlaylistIndex)
-                                                val contextUri =
-                                                    if (targetPlaylist?.id == "favorites_virtual_id") "" else targetPlaylist?.uri
-                                                        ?: ""
+                                                val targetPlaylist = playlists.getOrNull(selectedPlaylistIndex)
+                                                val contextUri = if (targetPlaylist?.id == "favorites_virtual_id") "" else targetPlaylist?.uri ?: ""
 
                                                 currentProgressMs = 0L
                                                 playingTrackDetails = selectedTrack
                                                 currentScreenState = ScreenState.TRACK_DETAILS
-                                                repo.play(
-                                                    selectedTrack.uri,
-                                                    contextUri,
-                                                    selectedTrackIndex
-                                                )
+                                                repo.play(selectedTrack.uri, contextUri, selectedTrackIndex)
                                             }
                                         }
                                     }
 
                                     ScreenState.SETTINGS -> {
-                                        val chosenTheme =
-                                            IPodThemeType.values()[selectedSettingsIndex]
+                                        val chosenTheme = IPodThemeType.values()[selectedSettingsIndex]
                                         themeManager.setTheme(chosenTheme)
                                     }
-
-                                    else -> { /* No-op */
-                                    }
+                                    else -> { /* No-op */ }
                                 }
                             },
                             onMenuClick = {
                                 when (currentScreenState) {
-                                    ScreenState.TRACK_DETAILS -> currentScreenState =
-                                        ScreenState.TRACKS
-
+                                    ScreenState.TRACK_DETAILS -> currentScreenState = ScreenState.TRACKS
                                     ScreenState.TRACKS -> {
                                         when (selectedSpotifyMenuIndex) {
                                             1 -> currentScreenState = ScreenState.ALBUMS
@@ -1057,25 +1112,16 @@ class MainActivity : ComponentActivity() {
                                             else -> currentScreenState = ScreenState.PLAYLISTS
                                         }
                                     }
-
-                                    ScreenState.PLAYLISTS, ScreenState.ALBUMS, ScreenState.ARTISTS, ScreenState.SEARCH -> currentScreenState =
-                                        ScreenState.SPOTIFY_MENU
-
-                                    ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> currentScreenState =
-                                        ScreenState.MAIN_MENU
-
-                                    ScreenState.MAIN_MENU -> { /* No-op */
-                                    }
-
-                                    else -> { /* No-op */
-                                    }
+                                    ScreenState.PLAYLISTS, ScreenState.ALBUMS, ScreenState.ARTISTS, ScreenState.SEARCH -> currentScreenState = ScreenState.SPOTIFY_MENU
+                                    ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> currentScreenState = ScreenState.MAIN_MENU
+                                    ScreenState.MAIN_MENU -> { /* No-op */ }
+                                    else -> { /* No-op */ }
                                 }
                             },
                             onMenuLongClick = {
                                 if (currentScreenState != ScreenState.SETTINGS && currentScreenState != ScreenState.CREDENTIALS_SETUP) {
                                     previousScreen = currentScreenState
-                                    selectedSettingsIndex =
-                                        IPodThemeType.values().indexOf(themeManager.currentTheme)
+                                    selectedSettingsIndex = IPodThemeType.values().indexOf(themeManager.currentTheme)
                                     currentScreenState = ScreenState.SETTINGS
                                 }
                             },
@@ -1128,6 +1174,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
     // 🟢 FUNZIONE HELPER: Incapsula l'avvio standard di Spotify una volta che le credenziali sono pronte
     private fun initializeSpotifyServices() {
         musicRepository = MusicRepository(spotifyManager)

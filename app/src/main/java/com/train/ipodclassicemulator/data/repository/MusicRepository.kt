@@ -3,7 +3,9 @@ package com.train.ipodclassicemulator.data.repository
 import android.util.Log
 import com.train.ipodclassicemulator.data.model.PlaylistItem
 import com.train.ipodclassicemulator.data.model.SpotifyAlbumDetails
+import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
+import com.train.ipodclassicemulator.data.model.SpotifyImage
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
 import com.train.ipodclassicemulator.data.remote.SpotifyApiService
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
@@ -113,11 +115,25 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         }
     }
 
-    suspend fun getTracksForAlbum(albumId: String): List<SpotifyTrackDetails> {
+    suspend fun getTracksForAlbum(
+        albumId: String,
+        albumImages: List<SpotifyImage>? = null
+    ): List<SpotifyTrackDetails> {
         val token = webAccessToken ?: return emptyList()
         return try {
             apiService.getAlbumTracks("Bearer $token", albumId).items.map {
-                SpotifyTrackDetails(id = it.id, name = it.name, uri = it.uri, artists = it.artists)
+                SpotifyTrackDetails(
+                    id = it.id,
+                    name = it.name,
+                    uri = it.uri,
+                    artists = it.artists,
+                    album = SpotifyAlbumModelInfo(
+                        id = albumId,
+                        name = "",
+                        uri = "",
+                        images = albumImages
+                    )
+                )
             }
         } catch (e: Exception) {
             Log.e("MusicRepository", "Errore brani album", e); handleAuthFailure(e); emptyList()
@@ -135,14 +151,25 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         }
     }
 
-    suspend fun getTracksForArtist(artistId: String): List<SpotifyTrackDetails> {
+    suspend fun getTracksForArtist(
+        artistId: String,
+        artistImages: List<SpotifyImage>? = null
+    ): List<SpotifyTrackDetails> {
         val token = webAccessToken ?: return emptyList()
         return try {
             apiService.getArtistTopTracks("Bearer $token", artistId).tracks.map {
-                SpotifyTrackDetails(id = it.id, name = it.name, uri = it.uri, artists = it.artists)
+                SpotifyTrackDetails(
+                    id = it.id,
+                    name = it.name,
+                    uri = it.uri,
+                    artists = it.artists,
+                    album = it.album?.let { alb ->
+                        SpotifyAlbumModelInfo(alb.id, alb.name, alb.uri, alb.images)
+                    }
+                )
             }
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore top tracks artista", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore brani artista", e); handleAuthFailure(e); emptyList()
         }
     }
 
