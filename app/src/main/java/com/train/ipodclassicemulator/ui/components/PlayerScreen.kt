@@ -25,14 +25,18 @@ import com.train.ipodclassicemulator.ui.theme.IPodTheme
 @Composable
 fun PlayerScreen(
     track: SpotifyTrackDetails,
-    coverUrl: String?, // URL reale passato da Spotify
-    progressMs: Long,  // Millisecondi passati reali
-    durationMs: Long,  // Durata totale reale
+    coverUrl: String?,               // URL reale passato da Spotify
+    progressMs: Long,                // Millisecondi passati reali
+    durationMs: Long,                // Durata totale reale
+    isLiked: Boolean,                // Stato reale del Cuore (da MainActivity/API)
+    playbackMode: Int,               // Modalità reale: 0=Off, 1=All, 2=One, 3=Shuffle
+    onLikeToggle: () -> Unit,        // Evento tap sul Cuore
+    onModeToggle: () -> Unit,        // Evento tap sulla Modalità
     modifier: Modifier = Modifier
 ) {
     val colors = IPodTheme.colors
-    var isFavorite by remember { mutableStateOf(false) }
-    var isShuffleMode by remember { mutableStateOf(false) }
+
+    // 🟢 RIMOSSE LE VARIABILI LOCALI 'isFavorite' E 'isShuffleMode' CHE ACCECAVANO I DATI REALI!
 
     val lcdText = colors.screenText
     val lcdProgressTrack = colors.screenSecondary
@@ -56,8 +60,6 @@ fun PlayerScreen(
             .padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 🟢 RIMOSSA LA STATUSBAR DUPLICATA DA QUI - CI PENSA LA MAINACTIVITY!
-
         Spacer(modifier = Modifier.height(4.dp))
 
         // Cover e Informazioni
@@ -77,7 +79,6 @@ fun PlayerScreen(
                     contentScale = ContentScale.Crop
                 )
             } else {
-                // Fallback se non c'è internet o manca l'URL
                 Box(
                     modifier = Modifier
                         .size(100.dp)
@@ -91,7 +92,7 @@ fun PlayerScreen(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Info Testo e Pulsanti Funzionanti
+            // Info Testo e Pulsanti Funzionanti al TAP
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = track.name,
@@ -110,40 +111,48 @@ fun PlayerScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Azioni interattive intercettabili
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically // 🟢 FONDAMENTALE: Forza l'allineamento perfetto sull'asse verticale
+                ) {
+
+                    // 🔴 1. PULSANTE PREFERITI (Solo Icona, senza box quadrato)
                     IconButton(
-                        onClick = { isFavorite = !isFavorite },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(
-                                color = if (isFavorite) Color(0xFFD32F2F) else lcdProgressTrack,
-                                shape = RoundedCornerShape(4.dp)
-                            )
+                        onClick = onLikeToggle,
+                        modifier = Modifier.size(24.dp) // 🟢 Dimensione nativa dell'area cliccabile senza background condizionale
                     ) {
                         Icon(
-                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            imageVector = if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Preferiti",
-                            tint = if (isFavorite) Color.White else lcdText,
-                            modifier = Modifier.size(18.dp)
+                            tint = if (isLiked) Color(0xFFD32F2F) else lcdText.copy(alpha = 0.6f),
+                            modifier = Modifier.size(22.dp) // Dimensione effettiva del cuore
                         )
                     }
+                    val isShuffleActive = playbackMode == 1
 
+                    // 🔴 2. PULSANTE SHUFFLE (Solo Icona, perfettamente allineato)
                     IconButton(
-                        onClick = { isShuffleMode = !isShuffleMode },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(
-                                color = if (isShuffleMode) lcdProgressFill else lcdProgressTrack,
-                                shape = RoundedCornerShape(4.dp)
-                            )
+                        onClick = onModeToggle,
+                        modifier = Modifier.size(24.dp) // 🟢 Stessa identica dimensione del contenitore per pareggiare l'allineamento
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Modalità casuale",
-                            tint = if (isShuffleMode) Color.White else lcdText,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        if (isShuffleActive) {
+                            Icon(
+                                painter = androidx.compose.ui.res.painterResource(id = com.train.ipodclassicemulator.R.drawable.shuffle_on),
+                                contentDescription = "Shuffle Attivo",
+                                tint = lcdProgressFill, // Colore acceso del tema
+                                modifier = Modifier.size(22.dp) // 🟢 Dimensione identica a quella del cuore per non avere disallineamenti
+                            )
+                        } else {
+                            Icon(
+                                painter = androidx.compose.ui.res.painterResource(id = com.train.ipodclassicemulator.R.drawable.shuffle_off),
+                                contentDescription = "Shuffle Disattivato",
+                                tint = lcdText.copy(alpha = 0.4f), // Grigio spento
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 }
             }

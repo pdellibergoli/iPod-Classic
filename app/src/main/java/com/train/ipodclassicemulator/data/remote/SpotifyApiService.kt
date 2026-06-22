@@ -14,7 +14,6 @@ import retrofit2.http.*
 
 interface SpotifyApiService {
 
-    // 🟢 L'autenticazione usa l'endpoint completo dell'Accounts Service di Spotify
     @FormUrlEncoded
     @POST("https://accounts.spotify.com/api/token")
     suspend fun getAccessToken(
@@ -24,74 +23,79 @@ interface SpotifyApiService {
         @Field("redirect_uri") redirectUri: String
     ): SpotifyTokenResponse
 
-    // 🟢 Tutti gli endpoint successivi usano URL relativi puliti che si agganciano al baseUrl reale
     @GET("me/playlists")
-    suspend fun getUserPlaylists(
-        @Header("Authorization") bearerToken: String
-    ): SpotifyUserPlaylistsResponse
+    suspend fun getUserPlaylists(@Header("Authorization") bearer: String): SpotifyUserPlaylistsResponse
 
-    @GET("playlists/{playlist_id}/tracks")
+    @GET("playlists/{id}/tracks")
     suspend fun getPlaylistTracks(
-        @Header("Authorization") bearerToken: String,
-        @Path("playlist_id") playlistId: String
+        @Header("Authorization") bearer: String,
+        @Path("id") playlistId: String
     ): SpotifyPlaylistTracksResponse
 
     @GET("me/tracks")
     suspend fun getSavedTracks(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Query("limit") limit: Int = 50
     ): SpotifySavedTracksResponse
 
     @GET("me/tracks/contains")
     suspend fun checkTracksSaved(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Query("ids") trackIds: String
     ): List<Boolean>
 
     @PUT("me/tracks")
     suspend fun saveTrack(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Query("ids") trackIds: String
     ): Response<Unit>
 
     @DELETE("me/tracks")
     suspend fun removeTrack(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Query("ids") trackIds: String
     ): Response<Unit>
 
     @GET("me/albums")
     suspend fun getSavedAlbums(
-        @Header("Authorization") bearerToken: String,
-        @Query("limit") limit: Int = 30
+        @Header("Authorization") bearer: String,
+        @Query("limit") limit: Int = 50
     ): SpotifySavedAlbumsResponse
 
-    @GET("v1/me/following?type=artist")
+    @GET("me/following")
     suspend fun getFollowedArtists(
-        @Header("Authorization") bearerToken: String,
-        @Query("limit") limit: Int = 30
+        @Header("Authorization") bearer: String,
+        @Query("type") type: String = "artist",
+        @Query("limit") limit: Int = 50
     ): SpotifyFollowedArtistsResponse
 
     @GET("albums/{id}/tracks")
     suspend fun getAlbumTracks(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Path("id") albumId: String,
         @Query("limit") limit: Int = 50
     ): SpotifyAlbumTracksResponse
 
     @GET("artists/{id}/top-tracks")
     suspend fun getArtistTopTracks(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Path("id") artistId: String,
         @Query("market") market: String = "IT"
     ): SpotifyArtistTopTracksResponse
 
-    @GET("v1/search")
+    @GET("search")
     suspend fun searchTracks(
-        @Header("Authorization") bearerToken: String,
+        @Header("Authorization") bearer: String,
         @Query("q") query: String,
         @Query("type") type: String = "track",
         @Query("market") market: String = "IT",
         @Query("limit") limit: Int = 30
     ): SpotifySearchResponse
+
+    @PUT("me/player/shuffle")
+    suspend fun setWebShuffleMode(
+        @Header("Authorization") bearer: String,
+        @Query("state") state: Boolean,
+        @Query("device_id") deviceId: String? = null
+    ): Response<Unit>
 }
