@@ -321,7 +321,7 @@ class MainActivity : ComponentActivity() {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(450.dp)
+                                .height(500.dp)
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(colors.bodyEdge)
                                 .padding(3.dp)

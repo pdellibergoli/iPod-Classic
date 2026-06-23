@@ -20,7 +20,8 @@ data class IPodColorPalette(
     val wheelHighlight: Color,
     val wheelText: Color,
     val centerButton: Color,
-    val centerButtonPressed: Color
+    val centerButtonPressed: Color,
+    val progressBar: Color
 )
 
 object IPodPalettes {
@@ -40,7 +41,8 @@ object IPodPalettes {
         wheelHighlight = Color(0xFFFFFFFF),
         wheelText = Color(0xFF6B6B6B),
         centerButton = Color(0xFFF6F6F2),
-        centerButtonPressed = Color(0xFFD6D6CC)
+        centerButtonPressed = Color(0xFFD6D6CC),
+        progressBar = Color(0Xff4ec4f2)
     )
 
     // ⚫ iPod Classic nero (Schermo a colori)
@@ -58,7 +60,9 @@ object IPodPalettes {
         wheelHighlight = Color(0xFF565656),
         wheelText = Color(0xFFC0C0C0),
         centerButton = Color(0xFF2B2B2B),
-        centerButtonPressed = Color(0xFF161616)
+        centerButtonPressed = Color(0xFF161616),
+        progressBar = Color(0Xff4ec4f2)
+
     )
 
     // ⬜ Silver / Acciaio spazzolato (Schermo a colori)
@@ -76,7 +80,8 @@ object IPodPalettes {
         wheelHighlight = Color(0xFFF1F2F3),
         wheelText = Color(0xFF54585B),
         centerButton = Color(0xFFD8DADC),
-        centerButtonPressed = Color(0xFFAEB2B6)
+        centerButtonPressed = Color(0xFFAEB2B6),
+        progressBar = Color(0Xff4ec4f2)
     )
 
     // ❤️ Product (RED) Special Edition (Schermo a colori)
@@ -94,7 +99,8 @@ object IPodPalettes {
         wheelHighlight = Color(0xFF4F4F4F),
         wheelText = Color(0xFFE0E0E0),
         centerButton = Color(0xFFECECEC),
-        centerButtonPressed = Color(0xFFC8C8C8)
+        centerButtonPressed = Color(0xFFC8C8C8),
+        progressBar = Color(0Xff4ec4f2)
     )
 }
 

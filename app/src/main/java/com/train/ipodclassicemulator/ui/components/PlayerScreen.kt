@@ -46,7 +46,7 @@ fun PlayerScreen(
     val colors = IPodTheme.colors
     val lcdText = colors.screenText
     val lcdProgressTrack = colors.screenSecondary
-    val lcdProgressFill = colors.screenAccent
+    val lcdProgressFill = colors.progressBar
 
     val progressPercent = if (durationMs > 0) progressMs.toFloat() / durationMs.toFloat() else 0f
     val isShuffleActive = playbackMode == 1
@@ -62,7 +62,7 @@ fun PlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(colors.screenBackground)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 1.dp, vertical = 6.dp)
     ) {
 
         // ── AREA PRINCIPALE: copertina 3D + info ─────────────────────────────
@@ -73,27 +73,30 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
 
-            // ── COPERTINA CON EFFETTO 3D ──────────────────────────────────────
-            AlbumCover3D(
-                coverUrl = coverUrl,
-                fallbackColor = lcdProgressTrack,
-                screenBg = colors.screenBackground
-            )
+            Box(modifier = Modifier.weight(2f)) {
+                // ── COPERTINA CON EFFETTO 3D ──────────────────────────────────────
+                AlbumCover3D(
+                    coverUrl = coverUrl,
+                    fallbackColor = lcdProgressTrack,
+                    screenBg = colors.screenBackground
+                )
+            }
 
             Spacer(modifier = Modifier.width(14.dp))
 
             // ── INFO + PULSANTI ───────────────────────────────────────────────
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 2.dp),
+                    .weight(1.8f)
+                    .fillMaxHeight()
+                    .padding(start = 0.dp),
                 verticalArrangement = Arrangement.Center
 
             ) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 0.dp),
                     verticalArrangement = Arrangement.Center
                 ) {
                     @Composable
@@ -162,36 +165,63 @@ fun PlayerScreen(
                 }
             }
         }
-
-        // ── PROGRESS BAR ──────────────────────────────────────────────────────
-        LinearProgressIndicator(
-            progress = progressPercent,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(5.dp)
-                .clip(RoundedCornerShape(3.dp)),
-            color = lcdProgressFill,
-            trackColor = lcdProgressTrack
-        )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 3.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = formatTime(progressMs),            color = lcdText, fontSize = 11.sp)
-            Text(text = "-${formatTime(durationMs - progressMs)}", color = lcdText, fontSize = 11.sp)
+            // ── PROGRESS BAR ──────────────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(0.3f)
+                    .padding(start = 2.dp)
+
+            ) {
+                Text(text = formatTime(progressMs), color = lcdText, fontSize = 11.sp)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(3f)
+                    .padding(start = 1.dp)
+
+            ) {
+                LinearProgressIndicator(
+                    progress = progressPercent,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(20.dp)
+                        .padding(5.dp, 0.dp),
+                        //.clip(RoundedCornerShape(3.dp)),
+                    color = lcdProgressFill,
+                    trackColor = lcdProgressTrack
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(0.3f)
+                    .padding(end = 2.dp)
+
+            ) {
+                Text(
+                    text = "-${formatTime(durationMs - progressMs)}",
+                    color = lcdText,
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 }
 
 // ── COPERTINA 3D ─────────────────────────────────────────────────────────────
 /**
- * Album art con effetto profondità:
- * 1. Ombra pronunciata (16 dp) → dà senso di floating
- * 2. Overlay gloss in alto a sinistra → simula la luce riflessa sul vinile
- * 3. Riflesso sfumato sotto → look iPod / iTunes Cover Flow
+ * Album art con effetto Cover Flow stile iPod:
+ * 1. Inclinazione diagonale tramite rotationY + rotationX (prospettiva 3D)
+ * 2. Ombra asimmetrica che segue la direzione dell'inclinazione
+ * 3. Gloss diagonale in alto a sinistra
+ * 4. Riflesso sotto: capovolto, dissolvenza progressiva + sfocatura simulata
+ *    tramite layers con alpha decrescente
  */
 @Composable
 private fun AlbumCover3D(
@@ -200,114 +230,70 @@ private fun AlbumCover3D(
     screenBg: Color
 ) {
     val coverSize = 200.dp
-    val reflectionHeight = 70.dp   // ~35 % della copertina
+    val reflectionHeight = 70.dp
+    val tiltY = 15f
+    val tiltX = 4f
 
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    val horizontalOffset = (0).dp
 
-        // ── Cover principale ─────────────────────────────────────────────────
+    // Usiamo un Box per avere controllo assoluto sulla posizione dei layer
+    Box(modifier = Modifier.size(coverSize + reflectionHeight)) {
+
+        // 1. RIFLESSO (disegnato per primo così sta sotto)
         Box(
             modifier = Modifier
-                .size(coverSize)
-                .shadow(
-                    elevation = 18.dp,
-                    shape = RoundedCornerShape(6.dp),
-                    spotColor = Color.Black.copy(alpha = 0.55f),
-                    ambientColor = Color.Black.copy(alpha = 0.25f)
-                )
-                .clip(RoundedCornerShape(6.dp))
-        ) {
-            // Immagine
-            if (!coverUrl.isNullOrEmpty()) {
-                AsyncImage(
-                    model = coverUrl,
-                    contentDescription = "Cover Art",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(fallbackColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("♪", fontSize = 44.sp, color = Color.White.copy(alpha = 0.4f))
+                .size(width = coverSize - 5.dp, height = reflectionHeight)
+                .align(Alignment.BottomCenter) // Allineato al fondo del Box padre
+                .offset(x = horizontalOffset)
+                .graphicsLayer {
+                    scaleY = -1f
+                    translationY = -10f // Sposta leggermente per staccare dal bordo
+                    translationX = -8f
+                    rotationY = 1f
+                    rotationX = 3f
                 }
-            }
-
-            // Gloss in alto a sinistra (riflesso luce)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.linearGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.22f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-            )
-
-            // Ombra interna ai bordi (dà profondità al frame)
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.12f)
-                            ),
-                            radius = 500f
-                        )
-                    )
-            )
-        }
-
-        // ── Riflesso sotto ───────────────────────────────────────────────────
-        // L'immagine viene capovolta verticalmente e sfumata verso lo sfondo
-        Box(
-            modifier = Modifier
-                .size(width = coverSize, height = reflectionHeight)
-                .graphicsLayer { scaleY = -1f } // capovolto
-                .clip(RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp))
+                //.clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
         ) {
             if (!coverUrl.isNullOrEmpty()) {
                 AsyncImage(
                     model = coverUrl,
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(width = coverSize, height = reflectionHeight)
-                        .graphicsLayer { alpha = 0.45f },
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0.4f },
                     contentScale = ContentScale.Crop,
                     alignment = Alignment.BottomCenter
                 )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(fallbackColor)
-                        .graphicsLayer { alpha = 0.35f }
-                )
             }
-
-            // Sfuma dal riflesso verso lo sfondo dello schermo
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                screenBg.copy(alpha = 0.8f),
-                                screenBg
-                            )
-                        )
+            // Gradiente corretto: parte trasparente (vicino alla cover) e finisce col colore sfondo
+            Box(Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        screenBg,
+                        screenBg.copy(alpha = 0.3f)
                     )
-            )
+                )
+            ))
+        }
+
+        // 2. COVER PRINCIPALE (disegnata per seconda così copre il riflesso)
+        Box(
+            modifier = Modifier
+                .size(coverSize)
+                .align(Alignment.TopCenter) // Posizionata sopra
+                .offset(x = horizontalOffset)
+                .graphicsLayer {
+                    cameraDistance = 8f * density
+                    rotationY = tiltY
+                    rotationX = tiltX
+                }
+                .shadow(20.dp)
+        ) {
+            if (!coverUrl.isNullOrEmpty()) {
+                AsyncImage(model = coverUrl, contentDescription = "Cover Art", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            } else {
+                Box(Modifier.fillMaxSize().background(fallbackColor))
+            }
+            // Gloss
+            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color.White.copy(0.3f), Color.Transparent))))
         }
     }
 }
