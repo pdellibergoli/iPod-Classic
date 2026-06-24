@@ -102,18 +102,39 @@ object IPodPalettes {
         centerButtonPressed = Color(0xFFC8C8C8),
         progressBar = Color(0Xff4ec4f2)
     )
+    // 🎸 U2 Special Edition (scocca nera, ghiera rossa)
+    val U2 = IPodColorPalette(
+        bodyPrimary = Color(0xFF1A1A1A),
+        bodySecondary = Color(0xFF0D0D0D),
+        bodyEdge = Color(0xFF050505),
+        screenBackground = Color(0xFFFFFFFF),
+        screenText = Color(0xFF000000),
+        screenAccent = Color(0xFFCC0000),
+        screenSecondary = Color(0xFFF2F2F7),
+        screenSelectedBg = Color(0xFFCC0000),
+        screenSelectedText = Color(0xFFFFFFFF),
+        wheelBase = Color(0xFFCC0000),
+        wheelHighlight = Color(0xFFE83333),
+        wheelText = Color(0xFFFFFFFF),
+        centerButton = Color(0xFF2B2B2B),
+        centerButtonPressed = Color(0xFF161616),
+        progressBar = Color(0xFFCC0000)
+    )
+
 }
 
 enum class IPodThemeType(val displayName: String) {
     CLASSIC_WHITE("Classic White"),
     CLASSIC_BLACK("Classic Black"),
     SILVER("Silver"),
-    PRODUCT_RED("Product (RED)");
+    PRODUCT_RED("Product (RED)"),
+    U2("U2 Special Edition");
 
     fun palette(): IPodColorPalette = when (this) {
         CLASSIC_WHITE -> IPodPalettes.ClassicWhite
         CLASSIC_BLACK -> IPodPalettes.ClassicBlack
         SILVER -> IPodPalettes.Silver
         PRODUCT_RED -> IPodPalettes.ProductRed
+        U2 -> IPodPalettes.U2
     }
 }

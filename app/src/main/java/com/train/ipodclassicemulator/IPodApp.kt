@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.train.ipodclassicemulator.ui.components.ClickWheel
+import com.train.ipodclassicemulator.ui.components.CoverFlow
 import com.train.ipodclassicemulator.ui.components.IPodMenuRow
 import com.train.ipodclassicemulator.ui.components.IPodStatusBar
 import com.train.ipodclassicemulator.ui.components.MediaListItem
@@ -60,7 +61,6 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
     val mainMenuListState = rememberLazyListState()
     val spotifyMenuListState = rememberLazyListState()
     val playlistListState = rememberLazyListState()
-    val albumListState = rememberLazyListState()
     val artistListState = rememberLazyListState()
     val trackListState = rememberLazyListState()
     val settingsListState = rememberLazyListState()
@@ -77,10 +77,7 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
         if (viewModel.screenState == ScreenState.PLAYLISTS && viewModel.playlists.isNotEmpty())
             playlistListState.scrollToKeepSelectedVisible(viewModel.selectedPlaylistIndex)
     }
-    LaunchedEffect(viewModel.selectedAlbumIndex, viewModel.screenState) {
-        if (viewModel.screenState == ScreenState.ALBUMS)
-            albumListState.scrollToKeepSelectedVisible(viewModel.selectedAlbumIndex)
-    }
+    // (nessun LaunchedEffect per album: ora usa CoverFlow che gestisce la selezione internamente)
     LaunchedEffect(viewModel.selectedArtistIndex, viewModel.screenState) {
         if (viewModel.screenState == ScreenState.ARTISTS)
             artistListState.scrollToKeepSelectedVisible(viewModel.selectedArtistIndex)
@@ -135,7 +132,11 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                         .padding(8.dp)
                 ) {
                     if (viewModel.isLoading) {
-                        LoadingScreen(statusText = viewModel.statusText)
+                        LoadingScreen(
+                            statusText = viewModel.statusText,
+                            showLoginButton = viewModel.showLoginButton,
+                            onLoginClick = { viewModel.onLoginButtonClicked() }
+                        )
                     } else {
                         IPodScreenContent(
                             viewModel = viewModel,
@@ -143,7 +144,6 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                             mainMenuListState = mainMenuListState,
                             spotifyMenuListState = spotifyMenuListState,
                             playlistListState = playlistListState,
-                            albumListState = albumListState,
                             artistListState = artistListState,
                             trackListState = trackListState,
                             settingsListState = settingsListState,
@@ -171,16 +171,37 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
 // ── Loading overlay ───────────────────────────────────────────────────────────
 
 @Composable
-private fun LoadingScreen(statusText: String) {
+private fun LoadingScreen(statusText: String, showLoginButton: Boolean = false, onLoginClick: () -> Unit = {}) {
     val colors = IPodTheme.colors
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        CircularProgressIndicator(color = colors.screenAccent)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(text = statusText, color = colors.screenText, fontSize = 14.sp)
+        if (showLoginButton) {
+            // Fix #6 — pulsante esplicito invece del solo spinner quando serve il login OAuth
+            Text(
+                text = statusText,
+                color = colors.screenText,
+                fontSize = 13.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            androidx.compose.material3.Button(
+                onClick = onLoginClick,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = colors.screenAccent
+                ),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            ) {
+                Text("Accedi a Spotify", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp)
+            }
+        } else {
+            CircularProgressIndicator(color = colors.screenAccent)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = statusText, color = colors.screenText, fontSize = 14.sp)
+        }
     }
 }
 
@@ -193,7 +214,6 @@ private fun IPodScreenContent(
     mainMenuListState: androidx.compose.foundation.lazy.LazyListState,
     spotifyMenuListState: androidx.compose.foundation.lazy.LazyListState,
     playlistListState: androidx.compose.foundation.lazy.LazyListState,
-    albumListState: androidx.compose.foundation.lazy.LazyListState,
     artistListState: androidx.compose.foundation.lazy.LazyListState,
     trackListState: androidx.compose.foundation.lazy.LazyListState,
     settingsListState: androidx.compose.foundation.lazy.LazyListState,
@@ -246,17 +266,13 @@ private fun IPodScreenContent(
         ScreenState.ALBUMS -> {
             Column(modifier = Modifier.fillMaxSize()) {
                 IPodStatusBar("Album", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
-                Spacer(Modifier.height(2.dp))
-                LazyColumn(state = albumListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    itemsIndexed(vm.albums) { index, album ->
-                        MediaListItem(
-                            title = album.name,
-                            subtitle = album.artists?.firstOrNull()?.name ?: "Unknown Artist",
-                            imageUrl = album.images?.firstOrNull()?.url,
-                            isSelected = index == vm.selectedAlbumIndex
-                        )
-                    }
-                }
+                CoverFlow(
+                    albums = vm.albums,
+                    selectedIndex = vm.selectedAlbumIndex,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                )
             }
         }
 

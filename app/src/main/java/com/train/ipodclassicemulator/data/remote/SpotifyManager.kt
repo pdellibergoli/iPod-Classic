@@ -1,6 +1,5 @@
 package com.train.ipodclassicemulator.data.remote
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -60,7 +59,8 @@ class SpotifyManager(private val context: Context) {
         return "Basic ${Base64.encodeToString(raw.toByteArray(), Base64.NO_WRAP)}"
     }
 
-    fun requestToken(activity: Activity) {
+    // Fix #3: accetta Context generico (anche Application) e aggiunge FLAG_ACTIVITY_NEW_TASK
+    fun requestToken(ctx: Context) {
         if (spotifyClientId.isBlank()) {
             Log.e("SpotifyManager", "Impossibile richiedere il token: Client ID mancante!")
             return
@@ -73,7 +73,10 @@ class SpotifyManager(private val context: Context) {
                 "&response_type=code" +
                 "&redirect_uri=${Uri.encode(redirectUri)}" +
                 "&scope=${Uri.encode(scopes)}"
-        activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)))
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        ctx.startActivity(intent)
     }
 
     fun connect(onConnected: () -> Unit) {

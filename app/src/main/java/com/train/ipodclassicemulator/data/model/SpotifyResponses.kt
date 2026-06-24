@@ -10,7 +10,8 @@ data class SpotifyTokenResponse(
 
 // Modello per la lista delle Playlist
 data class SpotifyUserPlaylistsResponse(
-    val items: List<PlaylistItem>
+    val items: List<PlaylistItem>,
+    val next: String? = null
 )
 
 data class PlaylistItem(
@@ -28,11 +29,12 @@ data class PlaylistTracksInfo(
 
 // Modello per ricevere i brani di una specifica playlist
 data class SpotifyPlaylistTracksResponse(
-    val items: List<PlaylistTrackItem>
+    val items: List<PlaylistTrackItem>,
+    val next: String? = null
 )
 
 data class PlaylistTrackItem(
-    val track: SpotifyTrackDetails
+    val track: SpotifyTrackDetails?
 )
 
 data class SpotifyTrackDetails(
@@ -49,7 +51,8 @@ data class SpotifyArtistInfo(
 
 // Modello per la lista "Brani che mi piacciono" (Liked Songs)
 data class SpotifySavedTracksResponse(
-    val items: List<SavedTrackItem>
+    val items: List<SavedTrackItem>,
+    val next: String? = null
 )
 
 data class SavedTrackItem(
@@ -57,7 +60,8 @@ data class SavedTrackItem(
 )
 
 data class SpotifySavedAlbumsResponse(
-    val items: List<SpotifyAlbumItem>
+    val items: List<SpotifyAlbumItem>,
+    val next: String? = null
 )
 
 data class SpotifyAlbumItem(
@@ -84,7 +88,13 @@ data class SpotifyFollowedArtistsResponse(
 )
 
 data class SpotifyArtistsContainer(
-    val items: List<SpotifyArtistDetails>
+    val items: List<SpotifyArtistDetails>,
+    val next: String? = null,
+    val cursors: SpotifyArtistCursors? = null
+)
+
+data class SpotifyArtistCursors(
+    val after: String? = null
 )
 
 data class SpotifyArtistDetails(

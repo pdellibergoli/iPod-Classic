@@ -15,11 +15,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 class MusicRepository(private val spotifyManager: SpotifyManager) {
 
-    private val apiService: SpotifyApiService = Retrofit.Builder()
-        .baseUrl("https://api.spotify.com/v1/")
-        .addConverterFactory(GsonConverterFactory.create())
-        .build()
-        .create(SpotifyApiService::class.java)
+    // Fix #10 — Retrofit è un singleton: non viene ricreato ad ogni istanza del repository
+    private val apiService: SpotifyApiService get() = Companion.apiService
 
     /**
      * Web Access Token in memoria per la sessione corrente.
@@ -44,9 +41,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
                 redirectUri = spotifyManager.redirectUri
             )
             webAccessToken = response.access_token
-            // Persiste il token Bearer tra le sessioni
             spotifyManager.savedWebToken = response.access_token
-            // Cancella il codice OAuth monouso: non serve più
             spotifyManager.pendingAuthCode = null
             Log.d("MusicRepository", "Web token ottenuto e salvato.")
             true
@@ -62,32 +57,58 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // ── PLAYLIST ──────────────────────────────────────────────────────────────
 
+    // Fix #2 — paginazione completa con loop su `offset`
     suspend fun getUserPlaylists(): List<PlaylistItem> {
         val token = webAccessToken ?: return emptyList()
+        val result = mutableListOf<PlaylistItem>()
+        var offset = 0
+        val limit = 50
         return try {
-            apiService.getUserPlaylists("Bearer $token").items
+            do {
+                val page = apiService.getUserPlaylists("Bearer $token", limit = limit, offset = offset)
+                result.addAll(page.items)
+                offset += limit
+            } while (page.next != null)
+            result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore playlist", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore playlist", e); handleAuthFailure(e); result
         }
     }
 
     suspend fun getTracksForPlaylist(playlistId: String): List<SpotifyTrackDetails> {
         val token = webAccessToken ?: return emptyList()
+        val result = mutableListOf<SpotifyTrackDetails>()
+        var offset = 0
+        val limit = 100
         return try {
-            apiService.getPlaylistTracks("Bearer $token", playlistId).items.map { it.track }
+            do {
+                val page = apiService.getPlaylistTracks("Bearer $token", playlistId, limit = limit, offset = offset)
+                result.addAll(page.items.mapNotNull { it.track })
+                offset += limit
+            } while (page.next != null)
+            result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore brani playlist", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore brani playlist", e); handleAuthFailure(e); result
         }
     }
 
     // ── LIKED SONGS ───────────────────────────────────────────────────────────
 
+    // Fix #2 — paginazione completa
     suspend fun getSavedTracks(): List<SpotifyTrackDetails> {
         val token = webAccessToken ?: return emptyList()
+        val result = mutableListOf<SpotifyTrackDetails>()
+        var offset = 0
+        val limit = 50
         return try {
-            apiService.getSavedTracks("Bearer $token").items.map { it.track }
+            do {
+                val page = apiService.getSavedTracks("Bearer $token", limit = limit, offset = offset)
+                result.addAll(page.items.map { it.track })
+                offset += limit
+            } while (page.next != null)
+            result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore liked songs", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore liked songs", e); handleAuthFailure(e); result
         }
     }
 
@@ -106,12 +127,21 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // ── ALBUM ─────────────────────────────────────────────────────────────────
 
+    // Fix #2 — paginazione completa
     suspend fun getUserSavedAlbums(): List<SpotifyAlbumDetails> {
         val token = webAccessToken ?: return emptyList()
+        val result = mutableListOf<SpotifyAlbumDetails>()
+        var offset = 0
+        val limit = 50
         return try {
-            apiService.getSavedAlbums("Bearer $token").items.map { it.album }
+            do {
+                val page = apiService.getSavedAlbums("Bearer $token", limit = limit, offset = offset)
+                result.addAll(page.items.map { it.album })
+                offset += limit
+            } while (page.next != null)
+            result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore album", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore album", e); handleAuthFailure(e); result
         }
     }
 
@@ -142,12 +172,21 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // ── ARTISTI ───────────────────────────────────────────────────────────────
 
+    // Fix #2 — paginazione completa (cursor-based per followed artists)
     suspend fun getUserFollowedArtists(): List<SpotifyArtistDetails> {
         val token = webAccessToken ?: return emptyList()
+        val result = mutableListOf<SpotifyArtistDetails>()
+        var after: String? = null
+        val limit = 50
         return try {
-            apiService.getFollowedArtists("Bearer $token").artists.items
+            do {
+                val page = apiService.getFollowedArtists("Bearer $token", limit = limit, after = after)
+                result.addAll(page.artists.items)
+                after = page.artists.cursors?.after
+            } while (page.artists.next != null)
+            result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore artisti", e); handleAuthFailure(e); emptyList()
+            Log.e("MusicRepository", "Errore artisti", e); handleAuthFailure(e); result
         }
     }
 
@@ -247,7 +286,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         }
     }
 
-    // 🟢 Invia il comando di Shuffle avanzato (Standard o Smart) direttamente ai server web di Spotify
+    // 🟢 Invia il comando di Shuffle avanzato direttamente ai server web di Spotify
     suspend fun setSpotifyShuffleMode(enabled: Boolean): Boolean {
         val token = webAccessToken ?: return false
         return try {
@@ -266,5 +305,14 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     companion object {
         const val LIKED_SONGS_ID = "liked_songs_virtual"
+
+        // Fix #10 — Retrofit singleton condiviso da tutte le istanze di MusicRepository
+        private val apiService: SpotifyApiService by lazy {
+            Retrofit.Builder()
+                .baseUrl("https://api.spotify.com/v1/")
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(SpotifyApiService::class.java)
+        }
     }
 }

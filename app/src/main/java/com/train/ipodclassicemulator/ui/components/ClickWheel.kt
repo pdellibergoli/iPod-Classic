@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.rememberNavController
 import com.train.ipodclassicemulator.ui.theme.IPodTheme
+import androidx.compose.ui.platform.LocalDensity
 import kotlin.math.atan2
 
 @Composable
@@ -38,6 +39,16 @@ fun ClickWheel(
     var previousAngle by remember { mutableStateOf(0.0) }
     var isCenterPressed by remember { mutableStateOf(false) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // Fix #5 — soglia di scroll adattata alla densità dello schermo:
+    // 15 dp convertiti in gradi equivalenti su un cerchio di 280 dp di diametro.
+    // Su schermi densi/grandi risulta più sensibile; su schermi piccoli rimane fluido.
+    val density = LocalDensity.current
+    val scrollThresholdDeg = remember(density) {
+        val wheelRadiusPx = with(density) { 140.dp.toPx() }
+        // arco in gradi corrispondente a 15 dp di spostamento tangenziale
+        Math.toDegrees(15.0 / wheelRadiusPx * (density.density))
+            .coerceIn(6.0, 20.0) // mai troppo rigido né troppo sensibile
+    }
 
     Box(
         modifier = modifier
@@ -104,7 +115,7 @@ fun ClickWheel(
                         if (deltaAngle > 180) deltaAngle -= 360
                         if (deltaAngle < -180) deltaAngle += 360
 
-                        if (Math.abs(deltaAngle) >= 15.0) {
+                        if (Math.abs(deltaAngle) >= scrollThresholdDeg) {
                             haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                             if (deltaAngle > 0) onScrollNext() else onScrollPrevious()
                             previousAngle = currentAngle

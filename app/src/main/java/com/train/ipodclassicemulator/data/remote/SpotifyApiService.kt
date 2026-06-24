@@ -23,19 +23,29 @@ interface SpotifyApiService {
         @Field("redirect_uri") redirectUri: String
     ): SpotifyTokenResponse
 
+    // Fix #2 — offset + limit per paginazione
     @GET("me/playlists")
-    suspend fun getUserPlaylists(@Header("Authorization") bearer: String): SpotifyUserPlaylistsResponse
+    suspend fun getUserPlaylists(
+        @Header("Authorization") bearer: String,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
+    ): SpotifyUserPlaylistsResponse
 
+    // Fix #2 — offset + limit per paginazione
     @GET("playlists/{id}/tracks")
     suspend fun getPlaylistTracks(
         @Header("Authorization") bearer: String,
-        @Path("id") playlistId: String
+        @Path("id") playlistId: String,
+        @Query("limit") limit: Int = 100,
+        @Query("offset") offset: Int = 0
     ): SpotifyPlaylistTracksResponse
 
+    // Fix #2 — offset + limit per paginazione
     @GET("me/tracks")
     suspend fun getSavedTracks(
         @Header("Authorization") bearer: String,
-        @Query("limit") limit: Int = 50
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
     ): SpotifySavedTracksResponse
 
     @GET("me/tracks/contains")
@@ -56,17 +66,21 @@ interface SpotifyApiService {
         @Query("ids") trackIds: String
     ): Response<Unit>
 
+    // Fix #2 — offset + limit per paginazione
     @GET("me/albums")
     suspend fun getSavedAlbums(
         @Header("Authorization") bearer: String,
-        @Query("limit") limit: Int = 50
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0
     ): SpotifySavedAlbumsResponse
 
+    // Fix #2 — cursor-based pagination (after) per followed artists
     @GET("me/following")
     suspend fun getFollowedArtists(
         @Header("Authorization") bearer: String,
         @Query("type") type: String = "artist",
-        @Query("limit") limit: Int = 50
+        @Query("limit") limit: Int = 50,
+        @Query("after") after: String? = null
     ): SpotifyFollowedArtistsResponse
 
     @GET("albums/{id}/tracks")

@@ -23,6 +23,7 @@ import com.train.ipodclassicemulator.data.remote.SpotifyManager
 import com.train.ipodclassicemulator.data.repository.MusicRepository
 import com.train.ipodclassicemulator.ui.theme.IPodThemeType
 import com.train.ipodclassicemulator.ui.theme.ThemeManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -71,6 +72,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     // Workaround for PlayerState bug in Favorites playlist
     var isLocalShuffleEnabled by mutableStateOf(false)
 
+    // Fix #11 — job per isTrackSaved: cancellato se arriva una nuova traccia prima del completamento
+    private var isTrackSavedJob: Job? = null
+
     // ── Search ────────────────────────────────────────────────────────────────
     val keyboardChars = listOf(
         "_", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
@@ -83,6 +87,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     // ── UI feedback ───────────────────────────────────────────────────────────
     var isLoading by mutableStateOf(false)
     var statusText by mutableStateOf("In attesa di Spotify...")
+
+    // Fix #6 — true quando serve mostrare il pulsante "Accedi a Spotify" esplicito
+    var showLoginButton by mutableStateOf(false)
 
     // ── Battery (set from UI via BroadcastReceiver) ───────────────────────────
     var batteryPercentage by mutableStateOf(100)
@@ -110,13 +117,23 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         musicRepository = MusicRepository(spotifyManager)
         musicRepository?.onTokenExpired = {
             Log.d(TAG, "Token scaduto. Richiedo nuova autenticazione...")
+            // Fix #1 — porta l'utente alla schermata di login invece di lasciare lo schermo fermo
+            screenState = ScreenState.CREDENTIALS_SETUP
+            statusText = "Sessione scaduta. Accedi di nuovo a Spotify."
+            showLoginButton = true
             spotifyManager.requestToken(getApplication())
         }
         if (spotifyManager.savedWebToken == null && spotifyManager.pendingAuthCode == null) {
+            // Fix #6 — mostra il pulsante login esplicito invece del solo testo "In attesa..."
+            showLoginButton = true
             spotifyManager.requestToken(getApplication())
         }
         try {
-            spotifyManager.connect { Log.d(TAG, "App Remote connesso!") }
+            spotifyManager.connect {
+                Log.d(TAG, "App Remote connesso!")
+                // Fix #7 — rilegge lo stato del player appena la connessione è disponibile
+                restoreNowPlayingFromPlayerState()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Errore auto-connessione", e)
         }
@@ -125,12 +142,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun handleCredentialsSaved(clientId: String, clientSecret: String) {
         spotifyManager.saveCredentials(clientId, clientSecret)
+        showLoginButton = false
         initializeSpotifyServices()
         screenState = ScreenState.MAIN_MENU
     }
 
     fun handleAuthCode(authCode: String, lifecycleScope: Lifecycle) {
         spotifyManager.pendingAuthCode = authCode
+        showLoginButton = false
         viewModelScope.launch {
             val success = musicRepository?.fetchWebToken(authCode) ?: false
             if (success) tokenRefreshTick = !tokenRefreshTick
@@ -140,6 +159,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e(TAG, "Errore connect", e)
         }
+    }
+
+    // Fix #6 — chiamato dal pulsante "Accedi a Spotify" esplicito in UI
+    fun onLoginButtonClicked() {
+        spotifyManager.requestToken(getApplication())
     }
 
     // ── Player state listener ─────────────────────────────────────────────────
@@ -175,10 +199,39 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     artists = listOf(SpotifyArtistInfo(name = track.artist.name ?: "Unknown Artist")),
                     album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
                 )
-                viewModelScope.launch {
+
+                // Fix #11 — cancella la chiamata precedente prima di lanciarne una nuova
+                isTrackSavedJob?.cancel()
+                isTrackSavedJob = viewModelScope.launch {
                     isCurrentTrackLiked = musicRepository?.isTrackSaved(cleanedId) ?: false
                 }
             }
+        }
+    }
+
+    // Fix #7 — rilegge lo stato corrente del player all'avvio (dopo connessione App Remote)
+    private fun restoreNowPlayingFromPlayerState() {
+        spotifyManager.spotifyAppRemote?.playerApi?.playerState?.setResultCallback { state ->
+            val track = state?.track ?: return@setResultCallback
+            if (playingTrackDetails != null) return@setResultCallback // già ripristinato via listener
+
+            trackDurationMs = track.duration
+            currentProgressMs = state.playbackPosition
+            isTrackPlaying = !state.isPaused
+
+            track.imageUri?.raw?.takeIf { it.isNotEmpty() }?.let { raw ->
+                currentCoverUrl = "https://i.scdn.co/image/${raw.substringAfter("image:")}"
+            }
+
+            val cleanedId = track.uri.substringAfter("track:")
+            playingTrackDetails = SpotifyTrackDetails(
+                id = cleanedId,
+                name = track.name,
+                uri = track.uri,
+                artists = listOf(SpotifyArtistInfo(name = track.artist.name ?: "Unknown Artist")),
+                album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
+            )
+            Log.d(TAG, "Now Playing ripristinato all'avvio: ${track.name}")
         }
     }
 
