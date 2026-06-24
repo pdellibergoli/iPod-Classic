@@ -61,6 +61,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     var artists by mutableStateOf<List<SpotifyArtistDetails>>(emptyList())
     var tracks by mutableStateOf<List<SpotifyTrackDetails>>(emptyList())
 
+    // Cover URL di tutti gli album salvati — usate per il Ken Burns nel menu
+    val allAlbumCoverUrls: List<String>
+        get() = albums.mapNotNull { it.images?.firstOrNull()?.url }.distinct()
+
     // ── Playback ──────────────────────────────────────────────────────────────
     var playingTrackDetails by mutableStateOf<SpotifyTrackDetails?>(null)
     var currentCoverUrl by mutableStateOf<String?>(null)
@@ -547,6 +551,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 val remote = repo.getUserPlaylists()
                 playlists = listOf(favoritesItem()) + remote
                 isLoading = false
+            }
+        }
+
+        // Carica le cover degli album in background per il Ken Burns nel menu
+        // (solo se non già caricate, senza mostrare loading)
+        if (albums.isEmpty() || forceReload) {
+            viewModelScope.launch {
+                albums = repo.getUserSavedAlbums()
             }
         }
     }

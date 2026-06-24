@@ -198,6 +198,8 @@ private fun CoverItem(
                 this.scaleX = scale
                 this.scaleY = scale
                 this.alpha = alpha
+                // ← rotationY va QUI, sul contenitore padre
+                this.rotationY = rotY
                 cameraDistance = 10f * density
             },
         contentAlignment = Alignment.TopCenter
@@ -208,9 +210,8 @@ private fun CoverItem(
                 .size(width = coverSize, height = reflectionHeight)
                 .align(Alignment.BottomCenter)
                 .graphicsLayer {
-                    scaleY = -1f          // capovolto
-                    rotationY = rotY
-                    cameraDistance = 10f * density
+                    scaleY = -1f
+                    // nessun rotationY qui — eredita dal padre
                     this.alpha = 0.35f
                 }
         ) {
@@ -239,21 +240,15 @@ private fun CoverItem(
                     )
             )
         }
-
         // ── Cover principale ──────────────────────────────────────────────────
         Box(
             modifier = Modifier
                 .size(coverSize)
                 .align(Alignment.TopCenter)
                 .graphicsLayer {
-                    rotationY = rotY
+                    //rotationY = rotY
                     cameraDistance = 10f * density
                 }
-                .then(
-                    if (isCenter) Modifier.shadow(12.dp, RoundedCornerShape(4.dp))
-                    else Modifier.shadow(4.dp, RoundedCornerShape(3.dp))
-                )
-                .clip(RoundedCornerShape(if (isCenter) 4.dp else 3.dp))
         ) {
             if (!imageUrl.isNullOrEmpty()) {
                 AsyncImage(

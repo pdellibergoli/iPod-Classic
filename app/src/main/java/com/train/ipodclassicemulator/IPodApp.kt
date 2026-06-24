@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.train.ipodclassicemulator.ui.components.AlbumCoverKenBurns
 import com.train.ipodclassicemulator.ui.components.ClickWheel
 import com.train.ipodclassicemulator.ui.components.CoverFlow
 import com.train.ipodclassicemulator.ui.components.IPodMenuRow
@@ -226,7 +227,8 @@ private fun IPodScreenContent(
             listState = mainMenuListState,
             batteryPercent = vm.batteryPercentage,
             isCharging = vm.isBatteryCharging,
-            isMusicPlaying = vm.isTrackPlaying
+            isMusicPlaying = vm.isTrackPlaying,
+            coverUrls = vm.allAlbumCoverUrls
         )
 
         ScreenState.SPOTIFY_MENU -> IPodMenuScreen(
@@ -236,7 +238,8 @@ private fun IPodScreenContent(
             listState = spotifyMenuListState,
             batteryPercent = vm.batteryPercentage,
             isCharging = vm.isBatteryCharging,
-            isMusicPlaying = vm.isTrackPlaying
+            isMusicPlaying = vm.isTrackPlaying,
+            coverUrls = vm.allAlbumCoverUrls
         )
 
         ScreenState.PLAYLISTS -> {
@@ -356,14 +359,36 @@ private fun IPodMenuScreen(
     listState: androidx.compose.foundation.lazy.LazyListState,
     batteryPercent: Int,
     isCharging: Boolean,
-    isMusicPlaying: Boolean
+    isMusicPlaying: Boolean,
+    coverUrls: List<String> = emptyList()
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         IPodStatusBar(title, batteryPercent, isCharging, isMusicPlaying)
         Spacer(Modifier.height(4.dp))
-        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
-            itemsIndexed(items) { index, option ->
-                IPodMenuRow(text = option, isSelected = index == selectedIndex)
+        // Split layout: menu a sinistra, Ken Burns cover a destra (solo se ci sono cover)
+        if (coverUrls.isNotEmpty()) {
+            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                // Metà sinistra — lista menu
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                ) {
+                    itemsIndexed(items) { index, option ->
+                        IPodMenuRow(text = option, isSelected = index == selectedIndex)
+                    }
+                }
+                // Metà destra — cover con Ken Burns
+                AlbumCoverKenBurns(
+                    coverUrls = coverUrls,
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                )
+            }
+        } else {
+            // Nessuna cover disponibile: menu full-width come prima
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                itemsIndexed(items) { index, option ->
+                    IPodMenuRow(text = option, isSelected = index == selectedIndex)
+                }
             }
         }
     }
