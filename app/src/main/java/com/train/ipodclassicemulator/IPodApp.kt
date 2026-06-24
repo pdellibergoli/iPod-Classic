@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -107,7 +108,7 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
             .background(Brush.verticalGradient(listOf(colors.bodyPrimary, colors.bodySecondary)))
             .padding(20.dp)
     ) {
-        val displayHeight = (maxHeight * 0.55f).coerceIn(220.dp, 500.dp)
+        val displayHeight = (maxHeight * 0.40f).coerceIn(220.dp, 500.dp)
 
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -325,6 +326,8 @@ private fun IPodScreenContent(
                         durationMs = vm.trackDurationMs,
                         isLiked = vm.isCurrentTrackLiked,
                         playbackMode = vm.currentPlaybackMode,
+                        volumePercent = vm.currentVolumePercent,
+                        showVolumeBar = vm.showVolumeBar,
                         onLikeToggle = { vm.toggleLike(track.id) },
                         onModeToggle = { vm.toggleShuffle() }
                     )
@@ -362,29 +365,70 @@ private fun IPodMenuScreen(
     isMusicPlaying: Boolean,
     coverUrls: List<String> = emptyList()
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        IPodStatusBar(title, batteryPercent, isCharging, isMusicPlaying)
-        Spacer(Modifier.height(4.dp))
-        // Split layout: menu a sinistra, Ken Burns cover a destra (solo se ci sono cover)
-        if (coverUrls.isNotEmpty()) {
-            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                // Metà sinistra — lista menu
+    // Se ci sono copertine, dividiamo lo schermo verticalmente
+    if (coverUrls.isNotEmpty()) {
+        Row(modifier = Modifier.fillMaxSize()) {
+
+            // ── METÀ SINISTRA: Status Bar + Menu ──
+            Column(
+                modifier = Modifier
+                    .weight(0.5f) // Usa 0.4f se vuoi il menu leggermente più stretto
+                    .fillMaxHeight()
+            ) {
+                // Status bar confinata solo alla parte sinistra, altezza normale
+                IPodStatusBar(
+                    title = title,
+                    batteryPercent = batteryPercent,
+                    isCharging = isCharging,
+                    isMusicPlaying = isMusicPlaying,
+                    modifier = Modifier.fillMaxWidth().height(25.dp)
+                )
+
+                // Linea orizzontale opzionale sotto la status bar (stile iPod)
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Black))
+
+                // Lista Menu
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f).fillMaxHeight()
+                    modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
                     itemsIndexed(items) { index, option ->
                         IPodMenuRow(text = option, isSelected = index == selectedIndex)
                     }
                 }
-                // Metà destra — cover con Ken Burns
+            }
+
+            // ── LINEA VERTICALE NERA SOTTILE ──
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(1.dp)
+                    .background(Color.Black)
+            )
+
+            // ── METÀ DESTRA: Copertine a tutta altezza ──
+            Box(
+                modifier = Modifier
+                    .weight(0.5f) // Usa 0.6f se hai ristretto il menu a 0.4f
+                    .fillMaxHeight()
+            ) {
                 AlbumCoverKenBurns(
                     coverUrls = coverUrls,
-                    modifier = Modifier.weight(1f).fillMaxHeight()
+                    modifier = Modifier.fillMaxSize()
                 )
             }
-        } else {
-            // Nessuna cover disponibile: menu full-width come prima
+        }
+    } else {
+        // Fallback: se non ci sono copertine caricate, il menu occupa tutto lo schermo
+        Column(modifier = Modifier.fillMaxSize()) {
+            IPodStatusBar(
+                title = title,
+                batteryPercent = batteryPercent,
+                isCharging = isCharging,
+                isMusicPlaying = isMusicPlaying,
+                modifier = Modifier.fillMaxWidth().height(25.dp)
+            )
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color.Black))
             LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                 itemsIndexed(items) { index, option ->
                     IPodMenuRow(text = option, isSelected = index == selectedIndex)

@@ -1,8 +1,13 @@
 package com.train.ipodclassicemulator.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,8 +24,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.material.icons.filled.VolumeDown
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -31,6 +38,24 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import kotlinx.coroutines.delay
 
+// Gradiente progress/volume: top→bottom, blu stile iPod originale
+private val blueBarGradient = Brush.verticalGradient(
+    colorStops = arrayOf(
+        0.0f to Color(0xFF91B7F1),
+        0.4f to Color(0xFF3388FF),
+        1.0f to Color(0xFF96DFFC)
+    )
+)
+
+// Track background della barra (sfondo grigio chiaro con bordi)
+private val trackBackground = Brush.verticalGradient(
+    colorStops = arrayOf(
+        0.0f to Color(0xFFFFFFFF),
+        0.4f to Color(0xFFEFEFEF),
+        1.0f to Color(0xFFD0D0D0)
+    )
+)
+
 @Composable
 fun PlayerScreen(
     track: SpotifyTrackDetails,
@@ -39,20 +64,16 @@ fun PlayerScreen(
     durationMs: Long,
     isLiked: Boolean,
     playbackMode: Int,
+    volumePercent: Float = 0f,       // 0..1
+    showVolumeBar: Boolean = false,   // true → mostra volume al posto del progress
     onLikeToggle: () -> Unit,
     onModeToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = IPodTheme.colors
     val lcdText = colors.screenText
-    val lcdProgressTrack = colors.screenSecondary
-    val lcdProgressFill = colors.progressBar
 
     val progressPercent = if (durationMs > 0) progressMs.toFloat() / durationMs.toFloat() else 0f
-    val isShuffleActive = playbackMode == 1
-
-    val artistName = track.artists.firstOrNull()?.name ?: "Artista Sconosciuto"
-    val albumName  = track.album?.name.orEmpty()
 
     fun formatTime(ms: Long): String {
         val s = ms / 1000; return "%d:%02d".format(s / 60, s % 60)
@@ -74,10 +95,9 @@ fun PlayerScreen(
         ) {
 
             Box(modifier = Modifier.weight(2f)) {
-                // ── COPERTINA CON EFFETTO 3D ──────────────────────────────────────
                 AlbumCover3D(
                     coverUrl = coverUrl,
-                    fallbackColor = lcdProgressTrack,
+                    fallbackColor = colors.screenSecondary,
                     screenBg = colors.screenBackground
                 )
             }
@@ -91,7 +111,6 @@ fun PlayerScreen(
                     .fillMaxHeight()
                     .padding(start = 0.dp),
                 verticalArrangement = Arrangement.Center
-
             ) {
                 Column(
                     modifier = Modifier
@@ -100,11 +119,15 @@ fun PlayerScreen(
                     verticalArrangement = Arrangement.Center
                 ) {
                     @Composable
-                    fun AutoScrollText(text: String, fontSize: androidx.compose.ui.unit.TextUnit, isBold: Boolean = false, color: Color) {
+                    fun AutoScrollText(
+                        text: String,
+                        fontSize: androidx.compose.ui.unit.TextUnit,
+                        isBold: Boolean = false,
+                        color: Color
+                    ) {
                         val scrollState = rememberScrollState()
-
                         LaunchedEffect(text) {
-                            delay(1500) // Pausa iniziale
+                            delay(1500)
                             val maxScroll = scrollState.maxValue
                             if (maxScroll > 0) {
                                 while (true) {
@@ -115,7 +138,6 @@ fun PlayerScreen(
                                 }
                             }
                         }
-
                         Box(modifier = Modifier.fillMaxWidth().horizontalScroll(scrollState)) {
                             Text(
                                 text = text,
@@ -128,17 +150,13 @@ fun PlayerScreen(
                         }
                     }
 
-                    // 1. Titolo
                     AutoScrollText(track.name, 17.sp, true, lcdText)
-
-                    // 2. Artista
                     Spacer(modifier = Modifier.height(4.dp))
                     AutoScrollText(track.artists.firstOrNull()?.name ?: "Artista Sconosciuto", 14.sp, false, lcdText)
-
-                    // 3. Album
                     Spacer(modifier = Modifier.height(2.dp))
                     AutoScrollText(track.album?.name ?: "Album Sconosciuto", 13.sp, false, Color.Gray)
                 }
+
                 // Cuore + Shuffle
                 Row(
                     modifier = Modifier
@@ -148,81 +166,163 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onLikeToggle, modifier = Modifier.size(35.dp)) {
-                        Icon(if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            null, tint = if (isLiked) Color(0xFFD32F2F) else lcdText.copy(alpha = 0.6f), modifier = Modifier.size(35.dp))
+                        Icon(
+                            if (isLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            null,
+                            tint = if (isLiked) Color(0xFFD32F2F) else lcdText.copy(alpha = 0.6f),
+                            modifier = Modifier.size(35.dp)
+                        )
                     }
-
                     Spacer(modifier = Modifier.width(10.dp))
-
                     IconButton(onClick = onModeToggle, modifier = Modifier.size(35.dp)) {
                         Icon(
                             painter = painterResource(id = if (playbackMode == 1) R.drawable.shuffle_on else R.drawable.shuffle_off),
                             contentDescription = "Shuffle",
-                            tint = if (playbackMode == 1) lcdProgressFill else lcdText.copy(alpha = 0.4f),
+                            tint = if (playbackMode == 1) colors.progressBar else lcdText.copy(alpha = 0.4f),
                             modifier = Modifier.size(35.dp)
                         )
                     }
                 }
             }
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // ── PROGRESS BAR ──────────────────────────────────────────────────────
-            Column(
-                modifier = Modifier
-                    .weight(0.3f)
-                    .padding(start = 2.dp)
 
-            ) {
-                Text(text = formatTime(progressMs), color = lcdText, fontSize = 11.sp)
-            }
-            Column(
-                modifier = Modifier
-                    .weight(3f)
-                    .padding(start = 1.dp)
-
-            ) {
-                LinearProgressIndicator(
-                    progress = progressPercent,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(20.dp)
-                        .padding(5.dp, 0.dp),
-                        //.clip(RoundedCornerShape(3.dp)),
-                    color = lcdProgressFill,
-                    trackColor = lcdProgressTrack
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .weight(0.3f)
-                    .padding(end = 2.dp)
-
-            ) {
-                Text(
-                    text = "-${formatTime(durationMs - progressMs)}",
-                    color = lcdText,
-                    fontSize = 11.sp
+        // ── PROGRESS / VOLUME BAR ─────────────────────────────────────────────
+        AnimatedContent(
+            targetState = showVolumeBar,
+            transitionSpec = {
+                fadeIn(tween(250)) togetherWith fadeOut(tween(250))
+            },
+            label = "progress_volume_switch"
+        ) { isVolume ->
+            if (isVolume) {
+                VolumeBar(volumePercent = volumePercent, lcdText = lcdText)
+            } else {
+                ProgressBar(
+                    progressMs = progressMs,
+                    durationMs = durationMs,
+                    progressPercent = progressPercent,
+                    lcdText = lcdText,
+                    formatTime = ::formatTime
                 )
             }
         }
     }
 }
 
+// ── Progress Bar ──────────────────────────────────────────────────────────────
+@Composable
+private fun ProgressBar(
+    progressMs: Long,
+    durationMs: Long,
+    progressPercent: Float,
+    lcdText: Color,
+    formatTime: (Long) -> String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Tempo trascorso (larghezza fissa per evitare salti)
+        Text(
+            text = formatTime(progressMs),
+            color = lcdText,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.width(36.dp)
+        )
+
+        // Barra con sfondo grigio sfumato + fill blu sfumato sovrapposto
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(17.dp)
+        ) {
+            // Background track
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(trackBackground)
+                    .border(androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFFC7C7C7)))
+            )
+            // Fill blu
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(fraction = progressPercent.coerceIn(0f, 1f))
+                    .background(blueBarGradient)
+            )
+        }
+
+        // Tempo rimanente (larghezza fissa, allineato a destra)
+        Text(
+            text = "-${formatTime(durationMs - progressMs)}",
+            color = lcdText,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(40.dp)
+        )
+    }
+}
+
+// ── Volume Bar (sostituisce il progress quando si cambia volume) ──────────────
+@Composable
+private fun VolumeBar(
+    volumePercent: Float,
+    lcdText: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Icona volume basso
+        Icon(
+            imageVector = Icons.Default.VolumeDown,
+            contentDescription = null,
+            tint = Color(0xFF595959),
+            modifier = Modifier.size(20.dp)
+        )
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        // Barra volume (stessa struttura del progress)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(17.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(trackBackground)
+                    .border(androidx.compose.foundation.BorderStroke(0.5.dp, Color(0xFFC7C7C7)))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(fraction = volumePercent.coerceIn(0f, 1f))
+                    .background(blueBarGradient)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(4.dp))
+
+        // Icona volume alto
+        Icon(
+            imageVector = Icons.Default.VolumeUp,
+            contentDescription = null,
+            tint = Color(0xFF595959),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
 // ── COPERTINA 3D ─────────────────────────────────────────────────────────────
-/**
- * Album art con effetto Cover Flow stile iPod:
- * 1. Inclinazione diagonale tramite rotationY + rotationX (prospettiva 3D)
- * 2. Ombra asimmetrica che segue la direzione dell'inclinazione
- * 3. Gloss diagonale in alto a sinistra
- * 4. Riflesso sotto: capovolto, dissolvenza progressiva + sfocatura simulata
- *    tramite layers con alpha decrescente
- */
 @Composable
 private fun AlbumCover3D(
     coverUrl: String?,
@@ -233,26 +333,23 @@ private fun AlbumCover3D(
     val reflectionHeight = 70.dp
     val tiltY = 15f
     val tiltX = 4f
-
     val horizontalOffset = (0).dp
 
-    // Usiamo un Box per avere controllo assoluto sulla posizione dei layer
     Box(modifier = Modifier.size(coverSize + reflectionHeight)) {
 
-        // 1. RIFLESSO (disegnato per primo così sta sotto)
+        // 1. RIFLESSO
         Box(
             modifier = Modifier
                 .size(width = coverSize - 5.dp, height = reflectionHeight)
-                .align(Alignment.BottomCenter) // Allineato al fondo del Box padre
+                .align(Alignment.BottomCenter)
                 .offset(x = horizontalOffset)
                 .graphicsLayer {
                     scaleY = -1f
-                    translationY = -10f // Sposta leggermente per staccare dal bordo
+                    translationY = -10f
                     translationX = -8f
                     rotationY = 1f
                     rotationX = 3f
                 }
-                //.clip(RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp))
         ) {
             if (!coverUrl.isNullOrEmpty()) {
                 AsyncImage(
@@ -263,22 +360,18 @@ private fun AlbumCover3D(
                     alignment = Alignment.BottomCenter
                 )
             }
-            // Gradiente corretto: parte trasparente (vicino alla cover) e finisce col colore sfondo
             Box(Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    colors = listOf(
-                        screenBg,
-                        screenBg.copy(alpha = 0.3f)
-                    )
+                    colors = listOf(screenBg, screenBg.copy(alpha = 0.3f))
                 )
             ))
         }
 
-        // 2. COVER PRINCIPALE (disegnata per seconda così copre il riflesso)
+        // 2. COVER PRINCIPALE
         Box(
             modifier = Modifier
                 .size(coverSize)
-                .align(Alignment.TopCenter) // Posizionata sopra
+                .align(Alignment.TopCenter)
                 .offset(x = horizontalOffset)
                 .graphicsLayer {
                     cameraDistance = 8f * density
@@ -288,11 +381,15 @@ private fun AlbumCover3D(
                 .shadow(20.dp)
         ) {
             if (!coverUrl.isNullOrEmpty()) {
-                AsyncImage(model = coverUrl, contentDescription = "Cover Art", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                AsyncImage(
+                    model = coverUrl,
+                    contentDescription = "Cover Art",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
             } else {
                 Box(Modifier.fillMaxSize().background(fallbackColor))
             }
-            // Gloss
             Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color.White.copy(0.3f), Color.Transparent))))
         }
     }

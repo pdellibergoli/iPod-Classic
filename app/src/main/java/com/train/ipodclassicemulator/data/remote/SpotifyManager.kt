@@ -185,7 +185,7 @@ class SpotifyManager(private val context: Context) {
         am.adjustStreamVolume(
             android.media.AudioManager.STREAM_MUSIC,
             if (up) android.media.AudioManager.ADJUST_RAISE else android.media.AudioManager.ADJUST_LOWER,
-            android.media.AudioManager.FLAG_SHOW_UI
+            0 // FLAG_SHOW_UI rimosso: il volume si mostra nella UI del player
         )
     }
 

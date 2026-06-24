@@ -99,6 +99,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     var batteryPercentage by mutableStateOf(100)
     var isBatteryCharging by mutableStateOf(false)
 
+    // ── Volume (mostrato al posto della progressbar nel player) ───────────────
+    var showVolumeBar by mutableStateOf(false)
+    var currentVolumePercent by mutableStateOf(0f)
+    private var volumeHideJob: Job? = null
+
     // ── Token refresh trigger ─────────────────────────────────────────────────
     var tokenRefreshTick by mutableStateOf(false)
     var currentCodeVerifier: String? = null
@@ -450,7 +455,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ARTISTS -> if (artists.isNotEmpty() && selectedArtistIndex < artists.lastIndex) selectedArtistIndex++
             ScreenState.TRACKS -> if (tracks.isNotEmpty() && selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
             ScreenState.SETTINGS -> { val max = IPodThemeType.values().lastIndex; if (selectedSettingsIndex < max) selectedSettingsIndex++ }
-            ScreenState.TRACK_DETAILS -> spotifyManager.adjustVolume(up = true)
+            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = true); showVolumeOverlay(up = true) }
             ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex + 1) % keyboardChars.size
             else -> Unit
         }
@@ -465,7 +470,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ARTISTS -> if (selectedArtistIndex > 0) selectedArtistIndex--
             ScreenState.TRACKS -> if (selectedTrackIndex > 0) selectedTrackIndex--
             ScreenState.SETTINGS -> if (selectedSettingsIndex > 0) selectedSettingsIndex--
-            ScreenState.TRACK_DETAILS -> spotifyManager.adjustVolume(up = false)
+            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = false); showVolumeOverlay(up = false) }
             ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size
             else -> Unit
         }
@@ -567,11 +572,27 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun favoritesItem() = PlaylistItem(
         id = FAVORITES_ID,
-        name = "❤️ I miei Preferiti",
+        name = "I miei Preferiti ❤️",
         uri = "",
         tracks = PlaylistTracksInfo("", 0),
         images = null
     )
+
+    // ── Volume overlay (mostra barra volume nel player per 2s) ────────────────
+
+    private fun showVolumeOverlay(up: Boolean) {
+        val am = getApplication<Application>()
+            .getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()
+        val curVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()
+        currentVolumePercent = if (maxVol > 0f) curVol / maxVol else 0f
+        showVolumeBar = true
+        volumeHideJob?.cancel()
+        volumeHideJob = viewModelScope.launch {
+            delay(2000)
+            showVolumeBar = false
+        }
+    }
 
     // ── ViewModel.Factory ─────────────────────────────────────────────────────
 

@@ -11,7 +11,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
-import kotlinx.coroutines.delay
 
 private const val ZOOM_DURATION_MS   = 5000   // quanto dura lo zoom su ogni cover
 private const val FADE_DURATION_MS   = 700    // durata del cross-fade
