@@ -33,20 +33,19 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
      * Scambia il codice OAuth monouso con il web token Bearer reale.
      * Salva il token in SharedPreferences e cancella il codice usato.
      */
-    suspend fun fetchWebToken(authCode: String): Boolean {
+    suspend fun fetchWebToken(authCode: String, codeVerifier: String): Boolean {
         return try {
-            val response = apiService.getAccessToken(
-                basicAuth = spotifyManager.getClientHeader(),
+            val response = apiService.getAccessTokenPkce(
+                clientId = spotifyManager.spotifyClientId,
+                grantType = "authorization_code",
                 code = authCode,
-                redirectUri = spotifyManager.redirectUri
+                redirectUri = spotifyManager.redirectUri,
+                codeVerifier = codeVerifier
             )
             webAccessToken = response.access_token
             spotifyManager.savedWebToken = response.access_token
-            spotifyManager.pendingAuthCode = null
-            Log.d("MusicRepository", "Web token ottenuto e salvato.")
             true
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore scambio token", e)
             handleAuthFailure(e)
             false
         }
@@ -228,6 +227,11 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     fun play(trackUri: String, contextUri: String? = null, trackIndex: Int = 0) {
         val playerApi = spotifyManager.spotifyAppRemote?.playerApi
+        if (playerApi == null) {
+            Log.e("MusicRepository", "Errore: SpotifyAppRemote è NULL! Non posso riprodurre.")
+            return
+        }
+        Log.d("MusicRepository", "Tentativo di riproduzione: $trackUri")
         if (!contextUri.isNullOrEmpty()) {
             try {
                 playerApi?.play(contextUri)
@@ -258,6 +262,8 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         return try {
             val response = apiService.checkTracksSaved(bearer = "Bearer $token", trackIds = trackId)
             response.firstOrNull() ?: false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e // ri-lancia sempre la cancellazione — non loggarla come errore
         } catch (e: Exception) {
             Log.e("MusicRepository", "Errore check preferiti", e)
             false
@@ -270,6 +276,8 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         return try {
             val response = apiService.saveTrack(bearer = "Bearer $token", trackIds = trackId)
             response.isSuccessful
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }
@@ -281,6 +289,8 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         return try {
             val response = apiService.removeTrack(bearer = "Bearer $token", trackIds = trackId)
             response.isSuccessful
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             false
         }

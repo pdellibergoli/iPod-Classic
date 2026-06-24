@@ -12,11 +12,15 @@ import com.spotify.android.appremote.api.ConnectionParams
 import com.spotify.android.appremote.api.Connector
 import com.spotify.android.appremote.api.SpotifyAppRemote
 import com.spotify.protocol.types.PlayerState
+import com.train.ipodclassicemulator.BuildConfig
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 class SpotifyManager(private val context: Context) {
-
-    val spotifyClientId: String get() = getClientId() ?: ""
-    val spotifyClientSecret: String get() = getClientSecret() ?: ""
+    init {
+        context.getSharedPreferences("spotify_settings", Context.MODE_PRIVATE).edit().clear().apply()
+    }
+    val spotifyClientId: String = BuildConfig.SPOTIFY_CLIENT_ID
 
     val redirectUri = "ipodapp://spotify-callback"
     var spotifyAppRemote: SpotifyAppRemote? = null
@@ -25,61 +29,119 @@ class SpotifyManager(private val context: Context) {
 
     private val prefs get() = context.getSharedPreferences("spotify_prefs", Context.MODE_PRIVATE)
 
-    /**
-     * Codice OAuth monouso ricevuto dal redirect di Spotify.
-     * Viene cancellato immediatamente dopo lo scambio con il web token.
-     */
     var pendingAuthCode: String?
         get() = prefs.getString("pending_auth_code", null)
         set(value) = prefs.edit().apply {
             if (value == null) remove("pending_auth_code") else putString("pending_auth_code", value)
         }.apply()
 
-    /**
-     * Web Access Token Bearer reale (~1 ora di validità).
-     * È questo che va salvato e ricaricato tra le sessioni.
-     */
+    var codeVerifier: String?
+        get() = prefs.getString("code_verifier", null)
+        set(value) = prefs.edit().apply {
+            if (value == null) remove("code_verifier") else putString("code_verifier", value)
+        }.apply()
+
     var savedWebToken: String?
         get() = prefs.getString("web_access_token", null)
         set(value) = prefs.edit().apply {
             if (value == null) remove("web_access_token") else putString("web_access_token", value)
         }.apply()
 
-    /** Cancella tutto — chiamato su 401 o logout forzato. */
+    fun generateCodeVerifier(): String {
+        val secureRandom = SecureRandom()
+        val bytes = ByteArray(64)
+        secureRandom.nextBytes(bytes)
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    }
+
+    fun generateCodeChallenge(verifier: String): String {
+        val bytes = verifier.toByteArray(Charsets.US_ASCII)
+        val messageDigest = MessageDigest.getInstance("SHA-256")
+        messageDigest.update(bytes)
+        val digest = messageDigest.digest()
+        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    }
+
     fun clearAllTokens() {
         prefs.edit().remove("pending_auth_code").remove("web_access_token").apply()
         Log.d("SpotifyManager", "Tutti i token cancellati.")
     }
 
-    fun getClientHeader(): String {
-        // Blocco di sicurezza se le chiavi non sono ancora state impostate
-        if (spotifyClientId.isBlank() || spotifyClientSecret.isBlank()) return ""
-
-        val raw = "$spotifyClientId:$spotifyClientSecret"
-        return "Basic ${Base64.encodeToString(raw.toByteArray(), Base64.NO_WRAP)}"
-    }
-
-    // Fix #3: accetta Context generico (anche Application) e aggiunge FLAG_ACTIVITY_NEW_TASK
     fun requestToken(ctx: Context) {
-        if (spotifyClientId.isBlank()) {
-            Log.e("SpotifyManager", "Impossibile richiedere il token: Client ID mancante!")
-            return
-        }
+        if (spotifyClientId.isBlank()) return
 
-        val scopes = "playlist-read-private playlist-read-collaborative " +
-                "user-library-read user-library-modify user-follow-read user-modify-playback-state"
+        val verifier = generateCodeVerifier()
+        this.codeVerifier = verifier
+
+        val challenge = generateCodeChallenge(verifier)
+
+        val scopes = "playlist-read-private playlist-read-collaborative user-library-read user-library-modify user-follow-read user-modify-playback-state"
+
         val authUrl = "https://accounts.spotify.com/authorize" +
                 "?client_id=$spotifyClientId" +
                 "&response_type=code" +
                 "&redirect_uri=${Uri.encode(redirectUri)}" +
-                "&scope=${Uri.encode(scopes)}"
+                "&scope=${Uri.encode(scopes)}" +
+                "&code_challenge_method=S256" +
+                "&code_challenge=$challenge"
+
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         ctx.startActivity(intent)
     }
 
+
+    private var isConnecting = false
+    /**
+     * Connects to Spotify App Remote if not already connected, then plays the given URI.
+     * This avoids the "AppRemote is NULL" crash by reconnecting transparently on each tap.
+     */
+    fun connectAndPlay(uri: String, contextUri: String? = null, trackIndex: Int = 0) {
+        if (spotifyAppRemote?.isConnected == true) {
+            playAfterConnect(uri, contextUri, trackIndex)
+            return
+        }
+        if (isConnecting) {
+            Log.w("SpotifyManager", "Connessione già in corso, ignoro tap duplicato")
+            return
+        }
+
+        isConnecting = true
+        Log.d("SpotifyManager", "App Remote non connesso, riconnessione in corso...")
+        val params = ConnectionParams.Builder(spotifyClientId)
+            .setRedirectUri(redirectUri)
+            .showAuthView(false)
+            .build()
+
+        SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
+            override fun onConnected(appRemote: SpotifyAppRemote) {
+                isConnecting = false
+                spotifyAppRemote = appRemote
+                subscribeToPlayerState()
+                Log.d("SpotifyManager", "Riconnesso! Avvio riproduzione: $uri")
+                playAfterConnect(uri, contextUri, trackIndex)
+            }
+
+            override fun onFailure(t: Throwable) {
+                isConnecting = false
+                Log.e("SpotifyManager", "Connessione fallita: ${t.message}", t)
+            }
+        })
+    }
+
+    private fun playAfterConnect(uri: String, contextUri: String?, trackIndex: Int) {
+        val playerApi = spotifyAppRemote?.playerApi ?: return
+        if (!contextUri.isNullOrEmpty()) {
+            playerApi.play(contextUri)
+            playerApi.skipToIndex(contextUri, trackIndex)
+        } else {
+            playerApi.play(uri)
+        }
+    }
+
     fun connect(onConnected: () -> Unit) {
+        Log.d("SpotifyManager", "Tentativo di connessione con Client ID: $spotifyClientId")
         if (spotifyClientId.isBlank()) {
             Log.e("SpotifyManager", "Impossibile connettere l'App Remote: Client ID vuoto!")
             return
@@ -89,15 +151,17 @@ class SpotifyManager(private val context: Context) {
             .setRedirectUri(redirectUri)
             .showAuthView(true)
             .build()
+
         SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
             override fun onConnected(appRemote: SpotifyAppRemote) {
                 spotifyAppRemote = appRemote
-                Log.d("SpotifyManager", "App Remote connesso!")
+                Log.d("SpotifyManager", "Spotify App Remote connesso con successo!")
                 subscribeToPlayerState()
                 onConnected()
             }
+
             override fun onFailure(t: Throwable) {
-                Log.e("SpotifyManager", "Errore connessione App Remote", t)
+                Log.e("SpotifyManager", "Dettaglio errore: ${t.cause?.message}", t)
             }
         })
     }
@@ -105,8 +169,6 @@ class SpotifyManager(private val context: Context) {
     fun subscribeToPlayerState() {
         spotifyAppRemote?.playerApi?.subscribeToPlayerState()?.setEventCallback { state ->
             isShuffling = state.playbackOptions.isShuffling
-            val track = state.track
-            val imageUrl = "https://i.scdn.co/image/${track.imageUri.raw?.removePrefix("spotify:image:")}"
             onPlayerStateChanged?.invoke(state)
         }
     }
@@ -140,25 +202,6 @@ class SpotifyManager(private val context: Context) {
         }
         spotifyAppRemote?.playerApi?.setRepeat(spotifyRepeatMode)
             ?.setErrorCallback { Log.e("SpotifyManager", "Errore impostazione Repeat", it) }
-    }
-
-    // 🟢 Mantieni queste funzioni intatte in fondo al file
-    fun getClientId(): String? {
-        val prefs = context.getSharedPreferences("spotify_settings", Context.MODE_PRIVATE)
-        return prefs.getString("client_id", null)
-    }
-
-    fun getClientSecret(): String? {
-        val prefs = context.getSharedPreferences("spotify_settings", Context.MODE_PRIVATE)
-        return prefs.getString("client_secret", null)
-    }
-
-    fun saveCredentials(clientId: String, clientSecret: String) {
-        val prefs = context.getSharedPreferences("spotify_settings", Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString("client_id", clientId)
-            .putString("client_secret", clientSecret)
-            .apply()
     }
 
     companion object { const val REQUEST_CODE = 1337 }

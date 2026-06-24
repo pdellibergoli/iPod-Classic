@@ -3,6 +3,7 @@ package com.train.ipodclassicemulator
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -37,6 +38,19 @@ class MainActivity : ComponentActivity() {
             if (authCode != null) {
                 viewModel.handleAuthCode(authCode, lifecycleScope = lifecycle)
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Riconnette l'App Remote in background se era caduto
+        if (viewModel.spotifyManager.spotifyAppRemote?.isConnected != true) {
+            viewModel.spotifyManager.connect(onConnected = {
+                Log.d("MainActivity", "App Remote riconnesso in onResume")
+            })
+        }
+        if (viewModel.spotifyManager.savedWebToken != null) {
+            viewModel.loadInitialDataIfReady()
         }
     }
 

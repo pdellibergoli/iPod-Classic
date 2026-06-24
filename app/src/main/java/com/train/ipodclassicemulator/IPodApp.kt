@@ -94,9 +94,7 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
     // ── Root UI ───────────────────────────────────────────────────────────────
 
     if (viewModel.screenState == ScreenState.CREDENTIALS_SETUP) {
-        SpotifySetupScreen(
-            onCredentialsSaved = { id, secret -> viewModel.handleCredentialsSaved(id, secret) }
-        )
+        SpotifySetupScreen(onLoginClick = { viewModel.onLoginButtonClicked() })
         return
     }
 

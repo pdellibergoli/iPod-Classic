@@ -97,16 +97,17 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Token refresh trigger ─────────────────────────────────────────────────
     var tokenRefreshTick by mutableStateOf(false)
+    var currentCodeVerifier: String? = null
 
     // ─────────────────────────────────────────────────────────────────────────
     init {
-        val savedId = spotifyManager.getClientId()
-        val savedSecret = spotifyManager.getClientSecret()
-        screenState = if (!savedId.isNullOrBlank() && !savedSecret.isNullOrBlank()) {
+        Log.d(TAG, "Client ID letto: '${spotifyManager.spotifyClientId}'")
+
+        if (spotifyManager.spotifyClientId.isNotBlank() && spotifyManager.spotifyClientId != "null") {
             initializeSpotifyServices()
-            ScreenState.MAIN_MENU
+            screenState = ScreenState.MAIN_MENU
         } else {
-            ScreenState.CREDENTIALS_SETUP
+            screenState = ScreenState.CREDENTIALS_SETUP
         }
         startProgressTicker()
     }
@@ -124,7 +125,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             spotifyManager.requestToken(getApplication())
         }
         if (spotifyManager.savedWebToken == null && spotifyManager.pendingAuthCode == null) {
-            // Fix #6 — mostra il pulsante login esplicito invece del solo testo "In attesa..."
+            viewModelScope.launch {
+                delay(1000)
+                spotifyManager.connect {
+                    Log.d("IPodViewModel", "App Remote connesso dopo delay!")
+                    restoreNowPlayingFromPlayerState()
+                }
+            }
             showLoginButton = true
             spotifyManager.requestToken(getApplication())
         }
@@ -141,7 +148,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun handleCredentialsSaved(clientId: String, clientSecret: String) {
-        spotifyManager.saveCredentials(clientId, clientSecret)
         showLoginButton = false
         initializeSpotifyServices()
         screenState = ScreenState.MAIN_MENU
@@ -151,7 +157,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         spotifyManager.pendingAuthCode = authCode
         showLoginButton = false
         viewModelScope.launch {
-            val success = musicRepository?.fetchWebToken(authCode) ?: false
+            val verifier = spotifyManager.codeVerifier ?: ""
+            val success = musicRepository?.fetchWebToken(authCode, verifier.toString()) ?: false
             if (success) tokenRefreshTick = !tokenRefreshTick
         }
         try {
@@ -187,8 +194,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     isLocalShuffleEnabled = isShuffle
                 }
 
-                track.imageUri?.raw?.takeIf { it.isNotEmpty() }?.let { raw ->
-                    currentCoverUrl = "https://i.scdn.co/image/${raw.substringAfter("image:")}"
+                track.imageUri?.raw?.let { raw ->
+                    val imageId = raw.substringAfter("image:")
+                    val finalUrl = "https://i.scdn.co/image/$imageId"
+                    Log.d("IPodViewModel", "DEBUG URL: $finalUrl")
+                    currentCoverUrl = finalUrl
                 }
 
                 val cleanedId = track.uri.substringAfter("track:")
@@ -523,18 +533,21 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Startup data load ─────────────────────────────────────────────────────
 
-    fun loadInitialDataIfReady() {
+    fun loadInitialDataIfReady(forceReload: Boolean = false) {
         val repo = musicRepository ?: return
-        if (playlists.isNotEmpty()) return
-        if (spotifyManager.savedWebToken == null && spotifyManager.pendingAuthCode == null) return
-        viewModelScope.launch {
-            isLoading = true; statusText = "Sincronizzazione Spotify..."
-            spotifyManager.pendingAuthCode?.let { repo.fetchWebToken(it) }
-            val remote = repo.getUserPlaylists()
-            if (remote.isNotEmpty() || spotifyManager.savedWebToken != null) {
+
+        // Se non abbiamo un token, non facciamo nulla
+        if (spotifyManager.savedWebToken == null) return
+
+        // Se le playlist sono vuote (o forziamo il reload), ricarichiamo
+        if (playlists.isEmpty() || forceReload) {
+            viewModelScope.launch {
+                isLoading = true
+                statusText = "Sincronizzazione..."
+                val remote = repo.getUserPlaylists()
                 playlists = listOf(favoritesItem()) + remote
+                isLoading = false
             }
-            isLoading = false
         }
     }
 
