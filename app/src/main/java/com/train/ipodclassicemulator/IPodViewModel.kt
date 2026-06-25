@@ -1,8 +1,14 @@
 package com.train.ipodclassicemulator
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -20,6 +26,8 @@ import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
 import com.train.ipodclassicemulator.data.model.SpotifyArtistInfo
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
+import com.train.ipodclassicemulator.data.repository.LocalMusicRepository
+import com.train.ipodclassicemulator.data.repository.LocalTrack
 import com.train.ipodclassicemulator.data.repository.MusicRepository
 import com.train.ipodclassicemulator.ui.theme.IPodThemeType
 import com.train.ipodclassicemulator.ui.theme.ThemeManager
@@ -31,7 +39,10 @@ private const val TAG = "IPodViewModel"
 private const val FAVORITES_ID = "favorites_virtual_id"
 
 enum class ScreenState {
-    CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
+    CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU,
+    LOCAL_MUSIC_MENU, LOCAL_FOLDERS, LOCAL_FOLDER_TRACKS,
+    LOCAL_ALBUMS, LOCAL_ALBUM_TRACKS, LOCAL_ARTISTS, LOCAL_ARTIST_TRACKS, LOCAL_TRACKS,
+    PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
 }
 
 class IPodViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,8 +63,159 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     var selectedTrackIndex by mutableStateOf(0)
     var selectedSettingsIndex by mutableStateOf(0)
 
-    val mainMenuOptions = listOf("Spotify", "Settings", "Shuffle Songs", "Now Playing")
+    val mainMenuOptions = listOf("Spotify", "Music", "Settings", "Shuffle Songs", "Now Playing")
     val spotifyMenuOptions = listOf("Playlist", "Album", "Artisti", "Ricerca")
+
+    // ── Musica locale ─────────────────────────────────────────────────────────
+    var localTracks by mutableStateOf<List<LocalTrack>>(emptyList())
+    var localMenuIndex by mutableIntStateOf(0)
+    val localMenuOptions = listOf("Cartelle", "Album", "Artisti", "Tutti")
+
+    // Gruppi
+    var localFolders  by mutableStateOf<List<String>>(emptyList())
+    var localAlbums   by mutableStateOf<List<String>>(emptyList())
+    var localArtists  by mutableStateOf<List<String>>(emptyList())
+
+    // Indici selezione per ogni vista
+    var selectedLocalMenuIndex   by mutableIntStateOf(0)
+    var selectedFolderIndex      by mutableIntStateOf(0)
+    var selectedLocalAlbumIndex  by mutableIntStateOf(0)
+    var selectedLocalArtistIndex by mutableIntStateOf(0)
+    var selectedLocalTrackIndex  by mutableIntStateOf(0)
+
+    // Brani filtrati per la vista corrente (cartella/album/artista o tutti)
+    var filteredLocalTracks by mutableStateOf<List<LocalTrack>>(emptyList())
+
+    var localMediaPlayer: android.media.MediaPlayer? = null   // tenuto solo per compatibilità reference
+    var isLocalMusicPlaying by mutableStateOf(false)
+
+    // ── Binding al LocalMusicService ──────────────────────────────────────
+    private var musicService: LocalMusicService? = null
+    private var isServiceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val localBinder = binder as? LocalMusicService.LocalBinder ?: return
+            musicService = localBinder.getService().also { svc ->
+                svc.onPlaybackStateChanged = { playing, posMs ->
+                    isTrackPlaying = playing
+                    isLocalMusicPlaying = playing || (musicService?.mediaPlayer != null)
+                    currentProgressMs = posMs
+                }
+                svc.onTrackCompleted = {
+                    isLocalMusicPlaying = false
+                    isTrackPlaying = false
+                    // Avanza automaticamente al brano successivo (se esiste)
+                    val next = (selectedLocalTrackIndex + 1)
+                    if (next <= filteredLocalTracks.lastIndex) {
+                        selectedLocalTrackIndex = next
+                        playLocalTrack(filteredLocalTracks[next])
+                    }
+                }
+                svc.onError = {
+                    isLocalMusicPlaying = false
+                    isTrackPlaying = false
+                }
+                svc.onNextRequested     = { skipNext() }
+                svc.onPreviousRequested = { skipPrevious() }
+            }
+            isServiceBound = true
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            musicService = null
+            isServiceBound = false
+        }
+    }
+
+    /** Da chiamare in MainActivity.onCreate */
+    fun bindMusicService() {
+        val app = getApplication<Application>()
+        val intent = Intent(app, LocalMusicService::class.java)
+        app.startService(intent)   // garantisce che il service sopravviva all'unbind
+        app.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    /** Da chiamare in MainActivity.onDestroy */
+    fun unbindMusicService() {
+        if (isServiceBound) {
+            getApplication<Application>().unbindService(serviceConnection)
+            isServiceBound = false
+        }
+    }
+
+
+    fun loadLocalMusic() {
+        viewModelScope.launch {
+            isLoading = true
+            statusText = "Lettura musica dispositivo..."
+            val all = LocalMusicRepository.loadTracks(getApplication())
+            localTracks  = all
+            localFolders = LocalMusicRepository.folders(all)
+            localAlbums  = LocalMusicRepository.albums(all)
+            localArtists = LocalMusicRepository.artists(all)
+            selectedLocalMenuIndex = 0
+            screenState = ScreenState.LOCAL_MUSIC_MENU
+            isLoading = false
+        }
+    }
+
+    fun openLocalFolder() {
+        val folder = localFolders.getOrNull(selectedFolderIndex) ?: return
+        filteredLocalTracks = localTracks.filter { it.folderPath == folder }
+        selectedLocalTrackIndex = 0
+        screenState = ScreenState.LOCAL_FOLDER_TRACKS
+    }
+
+    fun openLocalAlbum() {
+        val album = localAlbums.getOrNull(selectedLocalAlbumIndex) ?: return
+        filteredLocalTracks = localTracks.filter { it.album == album }
+        selectedLocalTrackIndex = 0
+        screenState = ScreenState.LOCAL_ALBUM_TRACKS
+    }
+
+    fun openLocalArtist() {
+        val artist = localArtists.getOrNull(selectedLocalArtistIndex) ?: return
+        filteredLocalTracks = localTracks.filter { it.artist == artist }
+        selectedLocalTrackIndex = 0
+        screenState = ScreenState.LOCAL_ARTIST_TRACKS
+    }
+
+    fun openAllLocalTracks() {
+        filteredLocalTracks = localTracks
+        selectedLocalTrackIndex = 0
+        screenState = ScreenState.LOCAL_TRACKS
+    }
+
+    fun playLocalTrack(track: LocalTrack) {
+        // Costruisce un SpotifyTrackDetails fittizio per riutilizzare PlayerScreen invariato
+        playingTrackDetails = SpotifyTrackDetails(
+            id      = track.id.toString(),
+            name    = track.title,
+            uri     = track.contentUri.toString(),
+            artists = listOf(SpotifyArtistInfo(name = track.artist)),
+            album   = SpotifyAlbumModelInfo(id = "", name = track.album, uri = "")
+        )
+        currentCoverUrl   = track.albumArtUri?.toString()
+        currentProgressMs = 0L
+        trackDurationMs   = track.durationMs
+        isTrackPlaying    = true
+        isLocalMusicPlaying = true
+        screenState = ScreenState.TRACK_DETAILS
+
+        // Delega al service (che gestisce anche la notifica e l'audio focus)
+        musicService?.playTrack(track)
+    }
+
+    fun stopLocalPlayback() {
+        musicService?.pausePlayback()
+        // Ferma il service in foreground
+        getApplication<Application>().stopService(
+            Intent(getApplication(), LocalMusicService::class.java)
+        )
+        isLocalMusicPlaying = false
+        isTrackPlaying = false
+    }
 
     // ── Data lists ────────────────────────────────────────────────────────────
     var playlists by mutableStateOf<List<PlaylistItem>>(emptyList())
@@ -165,11 +327,34 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     fun handleAuthCode(authCode: String, lifecycleScope: Lifecycle) {
         spotifyManager.pendingAuthCode = authCode
         showLoginButton = false
-        viewModelScope.launch {
-            val verifier = spotifyManager.codeVerifier ?: ""
-            val success = musicRepository?.fetchWebToken(authCode, verifier.toString()) ?: false
-            if (success) tokenRefreshTick = !tokenRefreshTick
+
+        // Assicura che il repository esista prima di usarlo
+        if (musicRepository == null) {
+            musicRepository = MusicRepository(spotifyManager)
         }
+
+        viewModelScope.launch {
+            val verifier = spotifyManager.codeVerifier ?: run {
+                Log.e(TAG, "handleAuthCode: codeVerifier nullo — impossibile scambiare il codice")
+                // Recovery: rimanda l'utente al login per ricominciare il flusso PKCE
+                showLoginButton = true
+                screenState = ScreenState.CREDENTIALS_SETUP
+                return@launch
+            }
+            val success = musicRepository?.fetchWebToken(authCode, verifier) ?: false
+            if (success) {
+                Log.d(TAG, "Token ottenuto con successo")
+                tokenRefreshTick = !tokenRefreshTick
+                // Naviga subito al menu principale senza aspettare loadInitialDataIfReady
+                screenState = ScreenState.MAIN_MENU
+                loadInitialDataIfReady()
+            } else {
+                Log.e(TAG, "fetchWebToken fallito — rimando al login")
+                showLoginButton = true
+                screenState = ScreenState.CREDENTIALS_SETUP
+            }
+        }
+
         try {
             spotifyManager.connect { Log.d(TAG, "Player remoto connesso!") }
         } catch (e: Exception) {
@@ -261,7 +446,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 delay(1000)
                 if (!isTrackPlaying) continue
-                if (currentProgressMs < trackDurationMs - 1500L) {
+                if (isLocalMusicPlaying || musicService?.mediaPlayer != null) {
+                    musicService?.let { svc ->
+                        try { currentProgressMs = svc.currentPositionMs() } catch (_: Exception) {}
+                    }
+                } else if (currentProgressMs < trackDurationMs - 1500L) {
                     currentProgressMs += 1000L
                 } else if (trackDurationMs > 0L) {
                     val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
@@ -371,14 +560,32 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun togglePlayPause() {
-        if (isTrackPlaying) {
-            spotifyManager.pausePlayback(); isTrackPlaying = false
+        if (isLocalMusicPlaying || musicService?.mediaPlayer != null) {
+            val svc = musicService ?: return
+            if (isTrackPlaying) {
+                svc.pausePlayback()
+                isTrackPlaying = false
+            } else {
+                svc.resumePlayback()
+                isTrackPlaying = true
+            }
         } else {
-            spotifyManager.resumePlayback(); isTrackPlaying = true
+            if (isTrackPlaying) {
+                spotifyManager.pausePlayback(); isTrackPlaying = false
+            } else {
+                spotifyManager.resumePlayback(); isTrackPlaying = true
+            }
         }
     }
 
     fun skipNext() {
+        if (isLocalMusicPlaying || musicService?.mediaPlayer != null) {
+            if (filteredLocalTracks.isEmpty()) return
+            val nextIndex = (selectedLocalTrackIndex + 1).coerceAtMost(filteredLocalTracks.lastIndex)
+            selectedLocalTrackIndex = nextIndex
+            playLocalTrack(filteredLocalTracks[nextIndex])
+            return
+        }
         val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
         if (isFavorites) {
             if (tracks.isEmpty()) return
@@ -393,6 +600,18 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun skipPrevious() {
+        if (isLocalMusicPlaying || musicService?.mediaPlayer != null) {
+            if (filteredLocalTracks.isEmpty()) return
+            if (currentProgressMs > 3000L) {
+                musicService?.seekTo(0)
+                currentProgressMs = 0L
+            } else {
+                val prevIndex = (selectedLocalTrackIndex - 1).coerceAtLeast(0)
+                selectedLocalTrackIndex = prevIndex
+                playLocalTrack(filteredLocalTracks[prevIndex])
+            }
+            return
+        }
         val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
         if (isFavorites) {
             if (tracks.isEmpty()) return
@@ -449,6 +668,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     fun onScrollNext() {
         when (screenState) {
             ScreenState.MAIN_MENU -> if (selectedMainMenuIndex < mainMenuOptions.lastIndex) selectedMainMenuIndex++
+            ScreenState.LOCAL_MUSIC_MENU   -> if (selectedLocalMenuIndex < localMenuOptions.lastIndex) selectedLocalMenuIndex++
+            ScreenState.LOCAL_FOLDERS      -> if (localFolders.isNotEmpty() && selectedFolderIndex < localFolders.lastIndex) selectedFolderIndex++
+            ScreenState.LOCAL_ALBUMS       -> if (localAlbums.isNotEmpty() && selectedLocalAlbumIndex < localAlbums.lastIndex) selectedLocalAlbumIndex++
+            ScreenState.LOCAL_ARTISTS      -> if (localArtists.isNotEmpty() && selectedLocalArtistIndex < localArtists.lastIndex) selectedLocalArtistIndex++
+            ScreenState.LOCAL_FOLDER_TRACKS,
+            ScreenState.LOCAL_ALBUM_TRACKS,
+            ScreenState.LOCAL_ARTIST_TRACKS,
+            ScreenState.LOCAL_TRACKS       -> if (filteredLocalTracks.isNotEmpty() && selectedLocalTrackIndex < filteredLocalTracks.lastIndex) selectedLocalTrackIndex++
             ScreenState.SPOTIFY_MENU -> if (selectedSpotifyMenuIndex < spotifyMenuOptions.lastIndex) selectedSpotifyMenuIndex++
             ScreenState.PLAYLISTS -> if (playlists.isNotEmpty() && selectedPlaylistIndex < playlists.lastIndex) selectedPlaylistIndex++
             ScreenState.ALBUMS -> if (albums.isNotEmpty() && selectedAlbumIndex < albums.lastIndex) selectedAlbumIndex++
@@ -464,6 +691,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     fun onScrollPrevious() {
         when (screenState) {
             ScreenState.MAIN_MENU -> if (selectedMainMenuIndex > 0) selectedMainMenuIndex--
+            ScreenState.LOCAL_MUSIC_MENU   -> if (selectedLocalMenuIndex > 0) selectedLocalMenuIndex--
+            ScreenState.LOCAL_FOLDERS      -> if (selectedFolderIndex > 0) selectedFolderIndex--
+            ScreenState.LOCAL_ALBUMS       -> if (selectedLocalAlbumIndex > 0) selectedLocalAlbumIndex--
+            ScreenState.LOCAL_ARTISTS      -> if (selectedLocalArtistIndex > 0) selectedLocalArtistIndex--
+            ScreenState.LOCAL_FOLDER_TRACKS,
+            ScreenState.LOCAL_ALBUM_TRACKS,
+            ScreenState.LOCAL_ARTIST_TRACKS,
+            ScreenState.LOCAL_TRACKS       -> if (selectedLocalTrackIndex > 0) selectedLocalTrackIndex--
             ScreenState.SPOTIFY_MENU -> if (selectedSpotifyMenuIndex > 0) selectedSpotifyMenuIndex--
             ScreenState.PLAYLISTS -> if (selectedPlaylistIndex > 0) selectedPlaylistIndex--
             ScreenState.ALBUMS -> if (selectedAlbumIndex > 0) selectedAlbumIndex--
@@ -482,9 +717,26 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         when (screenState) {
             ScreenState.MAIN_MENU -> when (selectedMainMenuIndex) {
                 0 -> screenState = ScreenState.SPOTIFY_MENU
-                1 -> screenState = ScreenState.SETTINGS
-                2 -> shuffleAll()
-                3 -> if (playingTrackDetails != null) screenState = ScreenState.TRACK_DETAILS
+                1 -> loadLocalMusic()
+                2 -> screenState = ScreenState.SETTINGS
+                3 -> shuffleAll()
+                4 -> if (playingTrackDetails != null) screenState = ScreenState.TRACK_DETAILS
+            }
+            ScreenState.LOCAL_MUSIC_MENU -> when (selectedLocalMenuIndex) {
+                0 -> { selectedFolderIndex = 0; screenState = ScreenState.LOCAL_FOLDERS }
+                1 -> { selectedLocalAlbumIndex = 0; screenState = ScreenState.LOCAL_ALBUMS }
+                2 -> { selectedLocalArtistIndex = 0; screenState = ScreenState.LOCAL_ARTISTS }
+                3 -> openAllLocalTracks()
+            }
+            ScreenState.LOCAL_FOLDERS      -> openLocalFolder()
+            ScreenState.LOCAL_ALBUMS       -> openLocalAlbum()
+            ScreenState.LOCAL_ARTISTS      -> openLocalArtist()
+            ScreenState.LOCAL_FOLDER_TRACKS,
+            ScreenState.LOCAL_ALBUM_TRACKS,
+            ScreenState.LOCAL_ARTIST_TRACKS,
+            ScreenState.LOCAL_TRACKS -> {
+                val track = filteredLocalTracks.getOrNull(selectedLocalTrackIndex) ?: return
+                playLocalTrack(track)
             }
             ScreenState.SPOTIFY_MENU -> when (selectedSpotifyMenuIndex) {
                 0 -> loadPlaylistsIfNeeded()
@@ -518,7 +770,23 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onMenuClick() {
         when (screenState) {
-            ScreenState.TRACK_DETAILS -> screenState = ScreenState.TRACKS
+            ScreenState.TRACK_DETAILS -> {
+                if (isLocalMusicPlaying) {
+                    // Torna alla lista locale da cui proveniva il brano
+                    screenState = when {
+                        filteredLocalTracks == localTracks -> ScreenState.LOCAL_TRACKS
+                        localFolders.getOrNull(selectedFolderIndex)?.let { folder ->
+                            filteredLocalTracks.firstOrNull()?.folderPath == folder
+                        } == true -> ScreenState.LOCAL_FOLDER_TRACKS
+                        localAlbums.getOrNull(selectedLocalAlbumIndex)?.let { album ->
+                            filteredLocalTracks.firstOrNull()?.album == album
+                        } == true -> ScreenState.LOCAL_ALBUM_TRACKS
+                        else -> ScreenState.LOCAL_ARTIST_TRACKS
+                    }
+                } else {
+                    screenState = ScreenState.TRACKS
+                }
+            }
             ScreenState.TRACKS -> screenState = when (selectedSpotifyMenuIndex) {
                 1 -> ScreenState.ALBUMS
                 2 -> ScreenState.ARTISTS
@@ -527,6 +795,12 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             }
             ScreenState.PLAYLISTS, ScreenState.ALBUMS, ScreenState.ARTISTS, ScreenState.SEARCH ->
                 screenState = ScreenState.SPOTIFY_MENU
+            ScreenState.LOCAL_MUSIC_MENU -> screenState = ScreenState.MAIN_MENU
+            ScreenState.LOCAL_FOLDERS, ScreenState.LOCAL_ALBUMS,
+            ScreenState.LOCAL_ARTISTS, ScreenState.LOCAL_TRACKS -> screenState = ScreenState.LOCAL_MUSIC_MENU
+            ScreenState.LOCAL_FOLDER_TRACKS  -> screenState = ScreenState.LOCAL_FOLDERS
+            ScreenState.LOCAL_ALBUM_TRACKS   -> screenState = ScreenState.LOCAL_ALBUMS
+            ScreenState.LOCAL_ARTIST_TRACKS  -> screenState = ScreenState.LOCAL_ARTISTS
             ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> screenState = ScreenState.MAIN_MENU
             else -> Unit
         }

@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -243,8 +246,131 @@ private fun IPodScreenContent(
             coverUrls = vm.allAlbumCoverUrls
         )
 
+        // ── Music: entry point — richiede permesso e carica ─────────────────────
+        ScreenState.LOCAL_MUSIC_MENU -> {
+            val ctx = LocalContext.current
+            val permissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted -> if (granted) vm.loadLocalMusic() }
+
+            // Carica al primo ingresso
+            LaunchedEffect(Unit) {
+                if (vm.localTracks.isEmpty()) {
+                    val perm = if (android.os.Build.VERSION.SDK_INT >= 33)
+                        android.Manifest.permission.READ_MEDIA_AUDIO
+                    else
+                        android.Manifest.permission.READ_EXTERNAL_STORAGE
+                    val ok = androidx.core.content.ContextCompat.checkSelfPermission(
+                        ctx, perm
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (ok) vm.loadLocalMusic() else permissionLauncher.launch(perm)
+                }
+            }
+
+            IPodMenuScreen(
+                title = "Music",
+                items = vm.localMenuOptions,
+                selectedIndex = vm.selectedLocalMenuIndex,
+                listState = rememberLazyListState(),
+                batteryPercent = vm.batteryPercentage,
+                isCharging = vm.isBatteryCharging,
+                isMusicPlaying = vm.isTrackPlaying,
+                coverUrls = vm.allAlbumCoverUrls
+            )
+        }
+
+        // ── Cartelle ──────────────────────────────────────────────────────────
+        ScreenState.LOCAL_FOLDERS -> {
+            val listState = rememberLazyListState()
+            LaunchedEffect(vm.selectedFolderIndex) {
+                listState.scrollToKeepSelectedVisible(vm.selectedFolderIndex)
+            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                IPodStatusBar("Cartelle", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                Spacer(Modifier.height(2.dp))
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    itemsIndexed(vm.localFolders) { index, folder ->
+                        IPodMenuRow(text = folder, isSelected = index == vm.selectedFolderIndex)
+                    }
+                }
+            }
+        }
+
+        // ── Album locali ──────────────────────────────────────────────────────
+        ScreenState.LOCAL_ALBUMS -> {
+            val listState = rememberLazyListState()
+            LaunchedEffect(vm.selectedLocalAlbumIndex) {
+                listState.scrollToKeepSelectedVisible(vm.selectedLocalAlbumIndex)
+            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                IPodStatusBar("Album", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                Spacer(Modifier.height(2.dp))
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    itemsIndexed(vm.localAlbums) { index, album ->
+                        // trova la copertina del primo brano di quell'album
+                        val art = vm.localTracks.firstOrNull { it.album == album }?.albumArtUri
+                        MediaListItem(
+                            title = album,
+                            subtitle = vm.localTracks.firstOrNull { it.album == album }?.artist ?: "",
+                            imageUrl = null,
+                            imageModel = art,
+                            isSelected = index == vm.selectedLocalAlbumIndex
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Artisti locali ────────────────────────────────────────────────────
+        ScreenState.LOCAL_ARTISTS -> {
+            val listState = rememberLazyListState()
+            LaunchedEffect(vm.selectedLocalArtistIndex) {
+                listState.scrollToKeepSelectedVisible(vm.selectedLocalArtistIndex)
+            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                IPodStatusBar("Artisti", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                Spacer(Modifier.height(2.dp))
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    itemsIndexed(vm.localArtists) { index, artist ->
+                        IPodMenuRow(text = artist, isSelected = index == vm.selectedLocalArtistIndex)
+                    }
+                }
+            }
+        }
+
+        // ── Lista brani (cartella / album / artista / tutti) ──────────────────
+        ScreenState.LOCAL_FOLDER_TRACKS,
+        ScreenState.LOCAL_ALBUM_TRACKS,
+        ScreenState.LOCAL_ARTIST_TRACKS,
+        ScreenState.LOCAL_TRACKS -> {
+            val title = when (vm.screenState) {
+                ScreenState.LOCAL_FOLDER_TRACKS  -> vm.localFolders.getOrNull(vm.selectedFolderIndex) ?: "Cartella"
+                ScreenState.LOCAL_ALBUM_TRACKS   -> vm.localAlbums.getOrNull(vm.selectedLocalAlbumIndex) ?: "Album"
+                ScreenState.LOCAL_ARTIST_TRACKS  -> vm.localArtists.getOrNull(vm.selectedLocalArtistIndex) ?: "Artista"
+                else -> "Tutti i brani"
+            }
+            val listState = rememberLazyListState()
+            LaunchedEffect(vm.selectedLocalTrackIndex) {
+                listState.scrollToKeepSelectedVisible(vm.selectedLocalTrackIndex)
+            }
+            Column(modifier = Modifier.fillMaxSize()) {
+                IPodStatusBar(title, vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                Spacer(Modifier.height(2.dp))
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    itemsIndexed(vm.filteredLocalTracks) { index, track ->
+                        MediaListItem(
+                            title = track.title,
+                            subtitle = track.artist,
+                            imageUrl = null,
+                            imageModel = track.albumArtUri,
+                            isSelected = index == vm.selectedLocalTrackIndex
+                        )
+                    }
+                }
+            }
+        }
+
         ScreenState.PLAYLISTS -> {
-            val colors = IPodTheme.colors
             Column(modifier = Modifier.fillMaxSize()) {
                 IPodStatusBar("Playlist", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
                 Spacer(Modifier.height(2.dp))

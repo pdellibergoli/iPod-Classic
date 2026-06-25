@@ -144,10 +144,6 @@ fun IPodMenuRow(
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
             color = if (isSelected) colors.screenSelectedText else colors.screenText
         )
-        Text(
-            text = "›",
-            fontSize = 16.sp,
-            color = if (isSelected) colors.screenSelectedText else colors.screenText.copy(alpha = 0.5f)
-        )
+
     }
 }

@@ -106,6 +106,7 @@ dependencies {
     // invece di lasciare che prenda l'ultima (1.16.0/1.11.3) che richiedeva SDK 35.
     implementation("androidx.compose.ui:ui-text-google-fonts:1.6.8")
     implementation("androidx.compose.material:material-icons-extended:1.6.8")
+    implementation ("androidx.media:media:1.7.0")
     implementation(libs.androidx.navigation.compose.jvmstubs)
 
     // Testing standard
