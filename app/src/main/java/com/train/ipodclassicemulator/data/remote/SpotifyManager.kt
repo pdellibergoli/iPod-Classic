@@ -17,6 +17,9 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 
 class SpotifyManager(private val context: Context) {
+    init {
+        context.getSharedPreferences("spotify_settings", Context.MODE_PRIVATE).edit().clear().apply()
+    }
     val spotifyClientId: String = BuildConfig.SPOTIFY_CLIENT_ID
 
     val redirectUri = "ipodapp://spotify-callback"

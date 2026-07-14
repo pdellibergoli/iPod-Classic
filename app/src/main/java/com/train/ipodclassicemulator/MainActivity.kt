@@ -13,7 +13,6 @@ import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import com.train.ipodclassicemulator.ui.theme.IPodClassicEmulatorTheme
 import com.train.ipodclassicemulator.ui.theme.ThemeManager
-import android.os.Build
 
 class MainActivity : ComponentActivity() {
 
@@ -23,18 +22,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         themeManager = ThemeManager(this)
-
-        // Avvia e connette il service per la musica locale
-        viewModel.bindMusicService()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(
-                    arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001
-                )
-            }
-        }
 
         // ── Fullscreen immersivo: nascondi status bar e navigation bar di sistema ──
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -60,13 +47,13 @@ class MainActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.systemUiVisibility = (
-                    View.SYSTEM_UI_FLAG_FULLSCREEN
-                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    )
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
         }
     }
 
@@ -78,18 +65,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleSpotifyCallback(intent)
+        val uri: Uri? = intent.data
+        if (uri != null && uri.toString().startsWith(viewModel.spotifyManager.redirectUri)) {
+            val authCode = uri.getQueryParameter("code")
+            if (authCode != null) {
+                viewModel.handleAuthCode(authCode, lifecycleScope = lifecycle)
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Safety net: gestisce il callback OAuth anche se arriva tramite onResume
-        // invece di onNewIntent (può succedere con alcuni launchMode o versioni Android)
-        val currentIntent = intent
-        if (currentIntent != null) {
-            handleSpotifyCallback(currentIntent)
-        }
-
         if (viewModel.spotifyManager.spotifyAppRemote?.isConnected != true) {
             viewModel.spotifyManager.connect(onConnected = {
                 Log.d("MainActivity", "App Remote riconnesso in onResume")
@@ -100,27 +86,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Estrae il codice OAuth dall'intent e lo consegna al ViewModel.
-     * Dopo la gestione, pulisce i dati dell'intent per evitare doppi processing
-     * in caso di onResume successivi.
-     */
-    private fun handleSpotifyCallback(intent: Intent) {
-        val uri: Uri? = intent.data
-        if (uri != null && uri.toString().startsWith(viewModel.spotifyManager.redirectUri)) {
-            val authCode = uri.getQueryParameter("code")
-            if (authCode != null) {
-                Log.d("MainActivity", "Auth code ricevuto: gestisco il callback Spotify")
-                viewModel.handleAuthCode(authCode, lifecycleScope = lifecycle)
-                // Pulisce l'intent così un eventuale onResume successivo non riprocessa lo stesso codice
-                setIntent(intent.apply { data = null })
-            }
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         viewModel.spotifyManager.disconnect()
-        viewModel.unbindMusicService()
     }
 }
