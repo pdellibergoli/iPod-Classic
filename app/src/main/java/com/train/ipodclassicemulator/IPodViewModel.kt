@@ -1,12 +1,12 @@
 package com.train.ipodclassicemulator
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -21,22 +21,63 @@ import com.train.ipodclassicemulator.data.model.SpotifyArtistInfo
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
 import com.train.ipodclassicemulator.data.repository.MusicRepository
+import com.train.ipodclassicemulator.feedback.FeedbackManager
 import com.train.ipodclassicemulator.ui.theme.IPodThemeType
 import com.train.ipodclassicemulator.ui.theme.ThemeManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 private const val TAG = "IPodViewModel"
 private const val FAVORITES_ID = "favorites_virtual_id"
+
+// ── Progress ticker ─────────────────────────────────────────────────────────
+private const val PROGRESS_TICK_MS = 500L    // aggiornamento della barra mentre suona
+private const val IDLE_TICK_MS = 1000L       // solo un controllo quando non suona nulla
+private const val RESYNC_MS = 5_000L         // riallinea la barra al player reale
+private const val END_OF_TRACK_MS = 1_500L   // finestra di "fine brano"
+private const val MIN_ADVANCE_MS = 3_000L    // anti doppio avanzamento dei Preferiti
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
 }
 
+// ── Impostazioni ─────────────────────────────────────────────────────────────
+
+/** Blocco visivo della schermata Impostazioni (separato da una riga). */
+enum class SettingsSection(val title: String) {
+    THEMES("Temi"),
+    FEEDBACK("Feedback"),
+    ACCOUNT("Account")
+}
+
+/** Determina cosa fa il tasto Select quando la riga è selezionata. */
+enum class SettingsRowKind { THEME, HAPTIC, SOUND, LOGOUT }
+
+/**
+ * Riga della schermata Impostazioni.
+ *
+ * @param value il testo mostrato a destra: il livello di vibrazione/sonoro
+ *   corrente. Per i temi è null e si mostra la spunta "✓".
+ * @param theme il tema rappresentato dalla riga (solo per `kind == THEME`).
+ */
+data class SettingsRow(
+    val kind: SettingsRowKind,
+    val label: String,
+    val section: SettingsSection,
+    val value: String? = null,
+    val theme: IPodThemeType? = null
+)
+
 class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     val spotifyManager = SpotifyManager(application)
+
+    /** Vibrazione e suono della click wheel, con livello regolabile dalle Impostazioni. */
+    val feedback = FeedbackManager(application)
+
     private var musicRepository: MusicRepository? = null
 
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -55,11 +96,94 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     val mainMenuOptions = listOf("Spotify", "Settings", "Shuffle Songs", "Now Playing")
     val spotifyMenuOptions = listOf("Playlist", "Album", "Artisti", "Ricerca")
 
+    // ── Impostazioni ──────────────────────────────────────────────────────────
+
+    /**
+     * Righe della schermata Impostazioni.
+     *
+     * È una proprietà **calcolata** e non un `val`: legge `feedback.hapticLevel`
+     * e `feedback.soundLevel`, così la lista si ricompone appena cambia il livello.
+     */
+    val settingsRows: List<SettingsRow> get() = buildList {
+        IPodThemeType.values().forEach { theme ->
+            add(
+                SettingsRow(
+                    kind = SettingsRowKind.THEME,
+                    label = theme.displayName,
+                    section = SettingsSection.THEMES,
+                    theme = theme
+                )
+            )
+        }
+        add(
+            SettingsRow(
+                kind = SettingsRowKind.HAPTIC,
+                label = "Risposta ruota",
+                section = SettingsSection.FEEDBACK,
+                value = feedback.hapticLevel.label
+            )
+        )
+        add(
+            SettingsRow(
+                kind = SettingsRowKind.SOUND,
+                label = "Suono ruota",
+                section = SettingsSection.FEEDBACK,
+                value = feedback.soundLevel.label
+            )
+        )
+        add(
+            SettingsRow(
+                kind = SettingsRowKind.LOGOUT,
+                label = "Disconnetti Spotify",
+                section = SettingsSection.ACCOUNT
+            )
+        )
+    }
+
+    /** true quando "Disconnetti Spotify" è selezionato e si aspetta la seconda pressione. */
+    var confirmLogout by mutableStateOf(false)
+
     // ── Data lists ────────────────────────────────────────────────────────────
     var playlists by mutableStateOf<List<PlaylistItem>>(emptyList())
     var albums by mutableStateOf<List<SpotifyAlbumDetails>>(emptyList())
     var artists by mutableStateOf<List<SpotifyArtistDetails>>(emptyList())
     var tracks by mutableStateOf<List<SpotifyTrackDetails>>(emptyList())
+
+    /**
+     * true **solo** quando l'elenco playlist è stato scaricato con successo.
+     *
+     * Non basta controllare `playlists.isNotEmpty()`: la lista contiene sempre
+     * la voce sentinel dei Preferiti, quindi un caricamento fallito veniva
+     * scambiato per "tutto ok" e non veniva più mai riprovato.
+     */
+    private var playlistsLoaded = false
+
+    /** Serializza le richieste playlist: una sola richiesta alla volta. */
+    private val playlistsMutex = Mutex()
+
+    /** Job della sincronizzazione iniziale playlist, per non lanciarla 2-3 volte. */
+    private var initialSyncJob: Job? = null
+
+    /** Job del caricamento album in background, per non duplicarlo. */
+    private var albumsJob: Job? = null
+
+    /**
+     * Snapshot della playlist "Preferiti" (virtuale) con il relativo indice.
+     * `tracks` viene sovrascritto quando l'utente apre album/artisti/ricerca,
+     * quindi per l'avanzamento automatico non possiamo affidarci a quella lista.
+     */
+    private var favoritesTracks: List<SpotifyTrackDetails> = emptyList()
+    private var favoritesTrackIndex = 0
+
+    /** true se l'ultima lista caricata in `tracks` era quella dei Preferiti. */
+    private var tracksFromFavorites by mutableStateOf(false)
+
+    /**
+     * true se ciò che sta suonando proviene dai Preferiti. Va deciso AL MOMENTO
+     * in cui si avvia la riproduzione, non dalla selezione corrente della lista
+     * (che l'utente può cambiare mentre ascolta).
+     */
+    private var playingFromFavorites by mutableStateOf(false)
 
     // Cover URL di tutti gli album salvati — usate per il Ken Burns nel menu
     val allAlbumCoverUrls: List<String>
@@ -114,7 +238,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
         if (spotifyManager.spotifyClientId.isNotBlank() && spotifyManager.spotifyClientId != "null") {
             initializeSpotifyServices()
-            screenState = ScreenState.MAIN_MENU
+            // Se non c'è ancora una sessione restiamo sulla schermata di login:
+            // sarà l'utente a premere "Accedi a Spotify" (niente browser ad ogni avvio).
+            screenState = if (spotifyManager.hasStoredSession) ScreenState.MAIN_MENU
+                          else ScreenState.CREDENTIALS_SETUP
         } else {
             screenState = ScreenState.CREDENTIALS_SETUP
         }
@@ -126,50 +253,80 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     fun initializeSpotifyServices() {
         musicRepository = MusicRepository(spotifyManager)
         musicRepository?.onTokenExpired = {
-            Log.d(TAG, "Token scaduto. Richiedo nuova autenticazione...")
-            // Fix #1 — porta l'utente alla schermata di login invece di lasciare lo schermo fermo
-            screenState = ScreenState.CREDENTIALS_SETUP
-            statusText = "Sessione scaduta. Accedi di nuovo a Spotify."
-            showLoginButton = true
-            spotifyManager.requestToken(getApplication())
+            // La sessione non è più recuperabile (refresh token rifiutato/revocato).
+            // Mostriamo la schermata di login IN-APP: niente browser automatico,
+            // sarà l'utente a premere "Accedi a Spotify".
+            Log.d(TAG, "Sessione Spotify non recuperabile. Mostro la schermata di login.")
+            if (screenState != ScreenState.CREDENTIALS_SETUP) {
+                statusText = "Sessione scaduta. Accedi di nuovo a Spotify."
+                showLoginButton = true
+                screenState = ScreenState.CREDENTIALS_SETUP
+            }
         }
-        if (spotifyManager.savedWebToken == null && spotifyManager.pendingAuthCode == null) {
-            viewModelScope.launch {
-                delay(1000)
-                spotifyManager.connect {
-                    Log.d("IPodViewModel", "App Remote connesso dopo delay!")
-                    restoreNowPlayingFromPlayerState()
+
+        when {
+            spotifyManager.hasStoredSession -> {
+                // Sessione salvata: rinnova il token in silenzio se serve e connetti.
+                // Nessun browser, nessun login finché il refresh token è valido.
+                viewModelScope.launch {
+                    musicRepository?.ensureFreshToken()
+                    try {
+                        spotifyManager.connect {
+                            Log.d(TAG, "App Remote connesso con sessione esistente")
+                            restoreNowPlayingFromPlayerState()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Errore auto-connessione", e)
+                    }
                 }
             }
-            showLoginButton = true
-            spotifyManager.requestToken(getApplication())
-        }
-        try {
-            spotifyManager.connect {
-                Log.d(TAG, "App Remote connesso!")
-                // Fix #7 — rilegge lo stato del player appena la connessione è disponibile
-                restoreNowPlayingFromPlayerState()
+            spotifyManager.pendingAuthCode != null -> {
+                // Codice OAuth già in volo (handleAuthCode lo gestirà): non aprire il browser
+                Log.d(TAG, "initializeSpotifyServices: pendingAuthCode presente, attendo handleAuthCode")
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Errore auto-connessione", e)
+            else -> {
+                // Primo avvio: apri il browser una volta sola, poi ci si affida
+                // al pulsante in-app (evita di riaprirlo ad ogni avvio).
+                showLoginButton = true
+                if (!spotifyManager.autoLoginAttempted) {
+                    spotifyManager.autoLoginAttempted = true
+                    spotifyManager.requestToken(getApplication())
+                }
+            }
         }
+
         setupPlayerStateListener()
     }
 
-    fun handleCredentialsSaved(clientId: String, clientSecret: String) {
-        showLoginButton = false
-        initializeSpotifyServices()
-        screenState = ScreenState.MAIN_MENU
-    }
-
-    fun handleAuthCode(authCode: String, lifecycleScope: Lifecycle) {
+    fun handleAuthCode(authCode: String) {
         spotifyManager.pendingAuthCode = authCode
         showLoginButton = false
-        viewModelScope.launch {
-            val verifier = spotifyManager.codeVerifier ?: ""
-            val success = musicRepository?.fetchWebToken(authCode, verifier.toString()) ?: false
-            if (success) tokenRefreshTick = !tokenRefreshTick
+
+        // Assicura che il repository esista prima di usarlo
+        if (musicRepository == null) {
+            musicRepository = MusicRepository(spotifyManager)
         }
+
+        viewModelScope.launch {
+            val verifier = spotifyManager.codeVerifier ?: run {
+                Log.e(TAG, "handleAuthCode: codeVerifier nullo — impossibile scambiare il codice")
+                showLoginButton = true
+                screenState = ScreenState.CREDENTIALS_SETUP
+                return@launch
+            }
+            val success = musicRepository?.fetchWebToken(authCode, verifier) ?: false
+            if (success) {
+                Log.d(TAG, "Token ottenuto con successo")
+                tokenRefreshTick = !tokenRefreshTick
+                screenState = ScreenState.MAIN_MENU
+                loadInitialDataIfReady()
+            } else {
+                Log.e(TAG, "fetchWebToken fallito — rimando al login")
+                showLoginButton = true
+                screenState = ScreenState.CREDENTIALS_SETUP
+            }
+        }
+
         try {
             spotifyManager.connect { Log.d(TAG, "Player remoto connesso!") }
         } catch (e: Exception) {
@@ -180,6 +337,50 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     // Fix #6 — chiamato dal pulsante "Accedi a Spotify" esplicito in UI
     fun onLoginButtonClicked() {
         spotifyManager.requestToken(getApplication())
+    }
+
+    /**
+     * Disconnette l'account Spotify: cancella tutti i token (refresh compreso),
+     * svuota i dati scaricati e riporta alla schermata di login.
+     */
+    fun disconnectSpotify() {
+        Log.d(TAG, "Disconnessione da Spotify richiesta dall'utente")
+        confirmLogout = false
+
+        spotifyManager.disconnect()
+        spotifyManager.clearAllTokens()
+
+        playlists = emptyList()
+        playlistsLoaded = false
+        albums = emptyList()
+        artists = emptyList()
+        tracks = emptyList()
+        favoritesTracks = emptyList()
+        favoritesTrackIndex = 0
+        tracksFromFavorites = false
+        playingFromFavorites = false
+        playingTrackDetails = null
+        currentCoverUrl = null
+        currentProgressMs = 0L
+        trackDurationMs = 0L
+        isTrackPlaying = false
+        isCurrentTrackLiked = false
+        currentPlaybackMode = 0
+        isLocalShuffleEnabled = false
+        showVolumeBar = false
+        selectedPlaylistIndex = 0
+        selectedAlbumIndex = 0
+        selectedArtistIndex = 0
+        selectedTrackIndex = 0
+        selectedSpotifyMenuIndex = 0
+
+        // Ricrea il repository senza token e rilegga il listener del player.
+        // autoLoginAttempted è già true: niente browser, solo il pulsante in-app.
+        initializeSpotifyServices()
+
+        statusText = "Disconnesso da Spotify."
+        showLoginButton = true
+        screenState = ScreenState.CREDENTIALS_SETUP
     }
 
     // ── Player state listener ─────────────────────────────────────────────────
@@ -193,8 +394,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 isTrackPlaying = !playerState.isPaused
 
                 val isShuffle = playerState.playbackOptions.isShuffling
-                val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
-                if (isFavorites) {
+                if (playingFromFavorites) {
                     currentPlaybackMode = if (isLocalShuffleEnabled) 1 else 0
                     spotifyManager.isShuffling = isLocalShuffleEnabled
                 } else {
@@ -256,46 +456,166 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Progress ticker ───────────────────────────────────────────────────────
 
+    /**
+     * Aggiorna la barra dei progressi.
+     *
+     *  - quando non suona nulla non fa nessun lavoro (nessuna scrittura di stato);
+     *  - il tempo avanza in base ai millisecondi REALMENTE trascorsi, così un
+     *    ritardo del loop non fa derivare la barra;
+     *  - ogni RESYNC_MS la barra viene riallineata alla posizione riportata da
+     *    Spotify: è il player a decidere dove siamo, non l'orologio dell'app.
+     */
     private fun startProgressTicker() {
         viewModelScope.launch {
+            var lastTick = SystemClock.elapsedRealtime()
+            var lastSyncAt = 0L
+            var lastAdvanceAt = 0L
+
             while (true) {
-                delay(1000)
-                if (!isTrackPlaying) continue
-                if (currentProgressMs < trackDurationMs - 1500L) {
-                    currentProgressMs += 1000L
-                } else if (trackDurationMs > 0L) {
-                    val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
-                    if (isFavorites && tracks.isNotEmpty()) {
-                        advanceFavoritesTrack()
-                    }
+                if (!isTrackPlaying) {
+                    // Riposo: al solo risveglio, nessun lavoro
+                    delay(IDLE_TICK_MS)
+                    lastTick = SystemClock.elapsedRealtime()
+                    lastSyncAt = 0L
+                    continue
+                }
+
+                delay(PROGRESS_TICK_MS)
+                val now = SystemClock.elapsedRealtime()
+                val elapsed = (now - lastTick).coerceIn(0L, PROGRESS_TICK_MS * 2)
+                lastTick = now
+
+                // Riallinea la barra con la posizione reale del player di Spotify:
+                // è anche il modo in cui recuperiamo la durata quando non è nota.
+                if (now - lastSyncAt >= RESYNC_MS) {
+                    lastSyncAt = now
+                    syncProgressFromPlayer()
+                }
+
+                if (trackDurationMs <= 0L) continue   // durata ancora ignota
+
+                currentProgressMs = (currentProgressMs + elapsed).coerceAtMost(trackDurationMs)
+
+                // Fine brano: solo i Preferiti vanno fatti avanzare da noi, perché
+                // sono una playlist virtuale che Spotify non conosce.
+                val nearEnd = currentProgressMs >= trackDurationMs - END_OF_TRACK_MS
+                if (nearEnd && playingFromFavorites &&
+                    now - lastAdvanceAt >= MIN_ADVANCE_MS &&
+                    isCurrentTrackInFavorites()
+                ) {
+                    lastAdvanceAt = now
+                    advanceFavoritesTrack()
+                    lastTick = SystemClock.elapsedRealtime()
+                    lastSyncAt = 0L
                 }
             }
         }
     }
 
+    /**
+     * true se il brano che stiamo mostrando fa ancora parte dello snapshot dei
+     * Preferiti. Se l'utente ha cambiato brano dall'app Spotify, smettiamo di
+     * avanzare in autonomia: non è più una riproduzione nostra.
+     */
+    private fun isCurrentTrackInFavorites(): Boolean {
+        val id = playingTrackDetails?.id ?: return false
+        return favoritesTracks.any { it.id == id }
+    }
+
+    /** Chiede a Spotify la posizione reale della traccia in riproduzione. */
+    private fun syncProgressFromPlayer() {
+        spotifyManager.spotifyAppRemote?.playerApi?.playerState?.setResultCallback { state ->
+            val track = state.track ?: return@setResultCallback
+            if (state.isPaused) return@setResultCallback
+
+            // Se il player è ancora sulla traccia precedente (il play è in volo)
+            // non tocchiamo nulla: altrimenti la barra tornerebbe indietro.
+            val stateId = track.uri.substringAfter("track:")
+            val shownId = playingTrackDetails?.id
+            if (shownId != null && shownId != stateId) return@setResultCallback
+
+            trackDurationMs = track.duration
+            currentProgressMs = state.playbackPosition
+        }
+    }
+
     private fun advanceFavoritesTrack() {
-        selectedTrackIndex = if (isLocalShuffleEnabled) {
-            tracks.indices.random().also { Log.d(TAG, "Fine brano: shuffle → $it") }
+        val list = favoritesTracks
+        if (list.isEmpty()) return
+
+        favoritesTrackIndex = if (isLocalShuffleEnabled) {
+            list.indices.random().also { Log.d(TAG, "Fine brano: shuffle → $it") }
         } else {
-            (selectedTrackIndex + 1).coerceAtMost(tracks.lastIndex)
+            (favoritesTrackIndex + 1).coerceAtMost(list.lastIndex)
                 .also { Log.d(TAG, "Fine brano: sequenziale → $it") }
         }
-        val next = tracks[selectedTrackIndex]
+        val next = list[favoritesTrackIndex]
         currentProgressMs = 0L
         playingTrackDetails = next
+        syncFavoritesSelection()
         musicRepository?.play(next.uri, "")
+    }
+
+    /** Se l'utente sta guardando la lista dei Preferiti, allinea anche la riga evidenziata. */
+    private fun syncFavoritesSelection() {
+        if (screenState == ScreenState.TRACKS &&
+            selectedSpotifyMenuIndex == 0 &&
+            playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
+        ) {
+            selectedTrackIndex = favoritesTrackIndex
+        }
     }
 
     // ── Data loading ──────────────────────────────────────────────────────────
 
-    fun loadPlaylistsIfNeeded() {
-        if (playlists.isNotEmpty()) { screenState = ScreenState.PLAYLISTS; return }
-        viewModelScope.launch {
-            isLoading = true; statusText = "Scarico Playlist..."
-            val remote = musicRepository?.getUserPlaylists() ?: emptyList()
-            playlists = listOf(favoritesItem()) + remote
-            screenState = ScreenState.PLAYLISTS
+    /**
+     * Scarica l'elenco playlist.
+     *
+     * - **single-flight**: le chiamate concorrenti (handleAuthCode, il
+     *   LaunchedEffect su `tokenRefreshTick`, `onResume` e la pressione di
+     *   "Playlist" partono quasi insieme) vengono messe in coda invece di
+     *   lanciare 2-3 richieste duplicate, che è probabilmente la causa del
+     *   primo caricamento fallito (burst di richieste subito dopo il login);
+     * - **un errore non viene memorizzato come "già caricato"**, quindi alla
+     *   pressione successiva si riprova;
+     * - **2 tentativi** per coprire un errore transitorio.
+     *
+     * @return true se la lista è pronta
+     */
+    private suspend fun syncPlaylists(force: Boolean = false): Boolean {
+        if (playlistsLoaded && !force) return true
+
+        return playlistsMutex.withLock {
+            // Un'altra coroutine potrebbe aver completato mentre aspettavamo il lock
+            if (playlistsLoaded && !force) return@withLock true
+            val repo = musicRepository ?: return@withLock false
+
+            var attempt = 0
+            var ok = false
+            while (!ok && attempt < 2) {
+                attempt++
+                isLoading = true
+                statusText = "Scarico Playlist..."
+                val remote = repo.getUserPlaylists()
+                if (remote != null) {
+                    playlists = listOf(favoritesItem()) + remote
+                    playlistsLoaded = true
+                    ok = true
+                } else {
+                    Log.w(TAG, "Sync playlist fallita (tentativo $attempt/2)")
+                }
+            }
             isLoading = false
+            // In caso di errore con una lista precedente, restiamo a quella
+            ok || playlistsLoaded
+        }
+    }
+
+    fun loadPlaylistsIfNeeded() {
+        if (playlistsLoaded) { screenState = ScreenState.PLAYLISTS; return }
+        viewModelScope.launch {
+            syncPlaylists()
+            screenState = ScreenState.PLAYLISTS
         }
     }
 
@@ -319,14 +639,27 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadTracksForPlaylist() {
         val playlist = playlists.getOrNull(selectedPlaylistIndex) ?: return
+        val isFavorites = playlist.id == FAVORITES_ID
         viewModelScope.launch {
             isLoading = true; statusText = "Carico i brani..."
-            tracks = if (playlist.id == FAVORITES_ID) {
+            val list = if (isFavorites) {
                 musicRepository?.getSavedTracks() ?: emptyList()
             } else {
                 musicRepository?.getTracksForPlaylist(playlist.id) ?: emptyList()
             }
-            selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
+            tracks = list
+            tracksFromFavorites = isFavorites
+            if (isFavorites) {
+                favoritesTracks = list
+                // Se quei Preferiti sono già in riproduzione, ripartiamo dalla traccia giusta
+                favoritesTrackIndex = list.indexOfFirst { it.id == playingTrackDetails?.id }
+                    .coerceAtLeast(0)
+                selectedTrackIndex = favoritesTrackIndex
+            } else {
+                selectedTrackIndex = 0
+            }
+            screenState = ScreenState.TRACKS
+            isLoading = false
         }
     }
 
@@ -335,6 +668,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isLoading = true; statusText = "Carico brani album..."
             tracks = musicRepository?.getTracksForAlbum(album.id, album.images) ?: emptyList()
+            tracksFromFavorites = false
             selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
         }
     }
@@ -343,7 +677,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         val artist = artists.getOrNull(selectedArtistIndex) ?: return
         viewModelScope.launch {
             isLoading = true; statusText = "Carico brani artista..."
-            tracks = musicRepository?.getTracksForArtist(artist.id, artist.images) ?: emptyList()
+            tracks = musicRepository?.getTracksForArtist(artist.id) ?: emptyList()
+            tracksFromFavorites = false
             selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
         }
     }
@@ -353,6 +688,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isLoading = true; statusText = "Ricerca in corso..."
             tracks = musicRepository?.searchSpotifyTracks(searchQuery) ?: emptyList()
+            tracksFromFavorites = false
             selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
         }
     }
@@ -361,13 +697,25 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playSelectedTrack() {
         val track = tracks.getOrNull(selectedTrackIndex) ?: return
-        val playlist = playlists.getOrNull(selectedPlaylistIndex)
-        val contextUri = if (playlist?.id == FAVORITES_ID) "" else playlist?.uri ?: ""
+
+        // I Preferiti sono decisi dalla lista che ha prodotto `tracks`, non dalla
+        // selezione corrente: quest'ultima cambia mentre l'utente continua ad ascoltare.
+        val isFavorites = tracksFromFavorites
+
+        val contextUri: String = when (selectedSpotifyMenuIndex) {
+            0 -> if (isFavorites) "" else playlists.getOrNull(selectedPlaylistIndex)?.uri ?: ""
+            1 -> albums.getOrNull(selectedAlbumIndex)?.uri ?: ""    // Album
+            2 -> artists.getOrNull(selectedArtistIndex)?.uri ?: ""  // Artista
+            else -> ""   // Ricerca: traccia singola, nessun contesto
+        }
+
+        if (isFavorites) favoritesTrackIndex = selectedTrackIndex
+        playingFromFavorites = isFavorites
         currentProgressMs = 0L
         playingTrackDetails = track
         screenState = ScreenState.TRACK_DETAILS
         musicRepository?.play(track.uri, contextUri, selectedTrackIndex)
-        if (playlist?.id == FAVORITES_ID) spotifyManager.setShuffle(isLocalShuffleEnabled)
+        if (isFavorites) spotifyManager.setShuffle(isLocalShuffleEnabled)
     }
 
     fun togglePlayPause() {
@@ -379,13 +727,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun skipNext() {
-        val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
-        if (isFavorites) {
-            if (tracks.isEmpty()) return
-            Log.d(TAG, "onNextClick Preferiti: shuffle=$isLocalShuffleEnabled")
-            selectedTrackIndex = if (isLocalShuffleEnabled) tracks.indices.random()
-            else (selectedTrackIndex + 1).coerceAtMost(tracks.lastIndex)
-            playFavoritesTrack(tracks[selectedTrackIndex])
+        if (playingFromFavorites) {
+            val list = favoritesTracks
+            if (list.isEmpty()) return
+            Log.d(TAG, "skipNext Preferiti: shuffle=$isLocalShuffleEnabled")
+            favoritesTrackIndex = if (isLocalShuffleEnabled) list.indices.random()
+                                  else (favoritesTrackIndex + 1).coerceAtMost(list.lastIndex)
+            syncFavoritesSelection()
+            playFavoritesTrack(list[favoritesTrackIndex])
         } else {
             spotifyManager.skipNext()
             if (screenState == ScreenState.TRACKS && selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
@@ -393,12 +742,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun skipPrevious() {
-        val isFavorites = playlists.getOrNull(selectedPlaylistIndex)?.id == FAVORITES_ID
-        if (isFavorites) {
-            if (tracks.isEmpty()) return
-            selectedTrackIndex = if (isLocalShuffleEnabled) tracks.indices.random()
-            else (selectedTrackIndex - 1).coerceAtLeast(0)
-            playFavoritesTrack(tracks[selectedTrackIndex])
+        if (playingFromFavorites) {
+            val list = favoritesTracks
+            if (list.isEmpty()) return
+            favoritesTrackIndex = if (isLocalShuffleEnabled) list.indices.random()
+                                  else (favoritesTrackIndex - 1).coerceAtLeast(0)
+            syncFavoritesSelection()
+            playFavoritesTrack(list[favoritesTrackIndex])
         } else {
             spotifyManager.skipPrevious()
             if (screenState == ScreenState.TRACKS && selectedTrackIndex > 0) selectedTrackIndex--
@@ -416,6 +766,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         if (tracks.isEmpty()) return
         val i = tracks.indices.random()
         selectedTrackIndex = i
+        playingFromFavorites = tracksFromFavorites
+        if (tracksFromFavorites) favoritesTrackIndex = i
         playingTrackDetails = tracks[i]
         currentProgressMs = 0L
         screenState = ScreenState.TRACK_DETAILS
@@ -454,8 +806,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ALBUMS -> if (albums.isNotEmpty() && selectedAlbumIndex < albums.lastIndex) selectedAlbumIndex++
             ScreenState.ARTISTS -> if (artists.isNotEmpty() && selectedArtistIndex < artists.lastIndex) selectedArtistIndex++
             ScreenState.TRACKS -> if (tracks.isNotEmpty() && selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
-            ScreenState.SETTINGS -> { val max = IPodThemeType.values().lastIndex; if (selectedSettingsIndex < max) selectedSettingsIndex++ }
-            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = true); showVolumeOverlay(up = true) }
+            ScreenState.SETTINGS -> {
+                if (selectedSettingsIndex < settingsRows.lastIndex) {
+                    selectedSettingsIndex++
+                    confirmLogout = false
+                }
+            }
+            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = true); showVolumeOverlay() }
             ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex + 1) % keyboardChars.size
             else -> Unit
         }
@@ -469,8 +826,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ALBUMS -> if (selectedAlbumIndex > 0) selectedAlbumIndex--
             ScreenState.ARTISTS -> if (selectedArtistIndex > 0) selectedArtistIndex--
             ScreenState.TRACKS -> if (selectedTrackIndex > 0) selectedTrackIndex--
-            ScreenState.SETTINGS -> if (selectedSettingsIndex > 0) selectedSettingsIndex--
-            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = false); showVolumeOverlay(up = false) }
+            ScreenState.SETTINGS -> {
+                if (selectedSettingsIndex > 0) {
+                    selectedSettingsIndex--
+                    confirmLogout = false
+                }
+            }
+            ScreenState.TRACK_DETAILS -> { spotifyManager.adjustVolume(up = false); showVolumeOverlay() }
             ScreenState.SEARCH -> selectedCharIndex = (selectedCharIndex - 1 + keyboardChars.size) % keyboardChars.size
             else -> Unit
         }
@@ -482,7 +844,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         when (screenState) {
             ScreenState.MAIN_MENU -> when (selectedMainMenuIndex) {
                 0 -> screenState = ScreenState.SPOTIFY_MENU
-                1 -> screenState = ScreenState.SETTINGS
+                1 -> { confirmLogout = false; screenState = ScreenState.SETTINGS }
                 2 -> shuffleAll()
                 3 -> if (playingTrackDetails != null) screenState = ScreenState.TRACK_DETAILS
             }
@@ -497,9 +859,26 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ARTISTS -> loadTracksForArtist()
             ScreenState.PLAYLISTS -> loadTracksForPlaylist()
             ScreenState.TRACKS -> playSelectedTrack()
-            ScreenState.SETTINGS -> {
-                val chosen = IPodThemeType.values()[selectedSettingsIndex]
-                themeManager.setTheme(chosen)
+            ScreenState.SETTINGS -> when (settingsRows.getOrNull(selectedSettingsIndex)?.kind) {
+                SettingsRowKind.THEME ->
+                    settingsRows[selectedSettingsIndex].theme?.let { themeManager.setTheme(it) }
+
+                // I due livelli di feedback si cambiano ciclando: Select avanza di
+                // un livello e lo fa sentire subito, così l'utente capisce subito
+                // la differenza.
+                SettingsRowKind.HAPTIC -> {
+                    feedback.hapticLevel = feedback.hapticLevel.next
+                    feedback.press()
+                }
+                SettingsRowKind.SOUND -> {
+                    feedback.soundLevel = feedback.soundLevel.next
+                    feedback.click()
+                }
+
+                // "Disconnetti Spotify": prima pressione chiede conferma, seconda agisce
+                SettingsRowKind.LOGOUT -> if (!confirmLogout) confirmLogout = true else disconnectSpotify()
+
+                null -> Unit
             }
             else -> Unit
         }
@@ -527,7 +906,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             }
             ScreenState.PLAYLISTS, ScreenState.ALBUMS, ScreenState.ARTISTS, ScreenState.SEARCH ->
                 screenState = ScreenState.SPOTIFY_MENU
-            ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> screenState = ScreenState.MAIN_MENU
+            ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> {
+                confirmLogout = false
+                screenState = ScreenState.MAIN_MENU
+            }
             else -> Unit
         }
     }
@@ -545,25 +927,25 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     fun loadInitialDataIfReady(forceReload: Boolean = false) {
         val repo = musicRepository ?: return
 
-        // Se non abbiamo un token, non facciamo nulla
-        if (spotifyManager.savedWebToken == null) return
+        // Se non abbiamo una sessione salvata, non facciamo nulla
+        if (!spotifyManager.hasStoredSession) return
 
-        // Se le playlist sono vuote (o forziamo il reload), ricarichiamo
-        if (playlists.isEmpty() || forceReload) {
-            viewModelScope.launch {
-                isLoading = true
-                statusText = "Sincronizzazione..."
-                val remote = repo.getUserPlaylists()
-                playlists = listOf(favoritesItem()) + remote
-                isLoading = false
-            }
+        // Guard su ogni task: handleAuthCode, il LaunchedEffect su
+        // tokenRefreshTick e onResume scattano insieme e senza questi check
+        // verrebbero lanciate 2-3 sincronizzazioni duplicate subito dopo il login.
+        val needPlaylists = forceReload || !playlistsLoaded
+        if (needPlaylists && (forceReload || initialSyncJob?.isActive != true)) {
+            initialSyncJob = viewModelScope.launch { syncPlaylists(forceReload) }
         }
 
         // Carica le cover degli album in background per il Ken Burns nel menu
-        // (solo se non già caricate, senza mostrare loading)
-        if (albums.isEmpty() || forceReload) {
-            viewModelScope.launch {
-                albums = repo.getUserSavedAlbums()
+        // (solo se non già caricate, senza mostrare loading).
+        // Un vuoto da errore non sovrascrive i dati già presenti.
+        val needAlbums = forceReload || albums.isEmpty()
+        if (needAlbums && (forceReload || albumsJob?.isActive != true)) {
+            albumsJob = viewModelScope.launch {
+                val list = repo.getUserSavedAlbums()
+                if (list.isNotEmpty() || albums.isEmpty()) albums = list
             }
         }
     }
@@ -580,7 +962,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Volume overlay (mostra barra volume nel player per 2s) ────────────────
 
-    private fun showVolumeOverlay(up: Boolean) {
+    /** Mostra la barra volume al posto della progressbar per 2 secondi. */
+    private fun showVolumeOverlay() {
         val am = getApplication<Application>()
             .getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
         val maxVol = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC).toFloat()
@@ -592,6 +975,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             delay(2000)
             showVolumeBar = false
         }
+    }
+
+    // ── Ciclo di vita ─────────────────────────────────────────────────────────
+
+    override fun onCleared() {
+        super.onCleared()
+        feedback.release()
     }
 
     // ── ViewModel.Factory ─────────────────────────────────────────────────────

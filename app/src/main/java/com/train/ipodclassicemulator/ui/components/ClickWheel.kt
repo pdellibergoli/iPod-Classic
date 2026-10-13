@@ -16,16 +16,19 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.navigation.compose.rememberNavController
 import com.train.ipodclassicemulator.ui.theme.IPodTheme
-import androidx.compose.ui.platform.LocalDensity
 import kotlin.math.atan2
+
+/** Diametro della ruota usato come riferimento per tutte le proporzioni. */
+private const val BASE_WHEEL_SIZE = 280f
 
 @Composable
 fun ClickWheel(
     modifier: Modifier = Modifier,
+    wheelSize: Dp = 280.dp,
     onScrollNext: () -> Unit,
     onScrollPrevious: () -> Unit,
     onSelectClick: () -> Unit,
@@ -33,31 +36,37 @@ fun ClickWheel(
     onMenuLongClick: () -> Unit = {},
     onPlayPauseClick: () -> Unit = {},
     onNextClick: () -> Unit = {},
-    onPreviousClick: () -> Unit = {}
+    onPreviousClick: () -> Unit = {},
+    /** Un "detent" della ruota durante lo scorrimento. */
+    onTick: () -> Unit = {},
+    /** Pressione di uno dei cinque tasti. */
+    onPress: () -> Unit = {}
 ) {
     val colors = IPodTheme.colors
     var previousAngle by remember { mutableStateOf(0.0) }
     var isCenterPressed by remember { mutableStateOf(false) }
-    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-    // Fix #5 — soglia di scroll adattata alla densità dello schermo:
-    // 15 dp convertiti in gradi equivalenti su un cerchio di 280 dp di diametro.
-    // Su schermi densi/grandi risulta più sensibile; su schermi piccoli rimane fluido.
-    val density = LocalDensity.current
-    val scrollThresholdDeg = remember(density) {
-        val wheelRadiusPx = with(density) { 140.dp.toPx() }
-        // arco in gradi corrispondente a 15 dp di spostamento tangenziale
-        Math.toDegrees(15.0 / wheelRadiusPx * (density.density))
+
+    // Fattore di scala rispetto alla ruota "classica" di 280dp:
+    // serve a far crescere in modo omogeneo pastiglie, testi e rientri.
+    val scale = wheelSize.value / BASE_WHEEL_SIZE
+
+    // Fix #5 — soglia di scroll adattata alla ruota:
+    // 15 dp di scorrimento tangenziale sul raggio della ruota, convertiti in gradi.
+    // Restituisce ~6° sia per 280dp che per ruote più grandi, così la sensibilità
+    // percepita resta la stessa.
+    val scrollThresholdDeg = remember(wheelSize) {
+        Math.toDegrees(15.0 / (wheelSize.value / 2.0))
             .coerceIn(6.0, 20.0) // mai troppo rigido né troppo sensibile
     }
 
     Box(
         modifier = modifier
-            .size(280.dp)
+            .size(wheelSize)
             .shadow(elevation = 8.dp, shape = CircleShape, clip = false)
             .background(
                 brush = Brush.radialGradient(
                     colors = listOf(colors.wheelHighlight, colors.wheelBase, colors.wheelBase),
-                    radius = 340f
+                    radius = wheelSize.value * (340f / BASE_WHEEL_SIZE)
                 ),
                 shape = CircleShape
             )
@@ -65,8 +74,8 @@ fun ClickWheel(
                 // Utilizziamo awaitPointerEventScope per gestire tutto insieme
                 detectTapGestures(
                     onTap = { offset ->
-                        // 🟢 TAP: Vibrazione feedback
-                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        // 🟢 TAP: feedback fisico/sonoro
+                        onPress()
 
                         val centerX = size.width / 2f
                         val centerY = size.height / 2f
@@ -83,7 +92,7 @@ fun ClickWheel(
                         }
                     },
                     onLongPress = { offset ->
-                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                        onPress()
                         val centerX = size.width / 2f
                         val centerY = size.height / 2f
                         val x = offset.x - centerX
@@ -92,7 +101,6 @@ fun ClickWheel(
                         val normalizedAngle = if (angle < 0) angle + 360 else angle
 
                         if (normalizedAngle in 225.0..315.0) {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                             onMenuLongClick()
                         }
                     }
@@ -116,7 +124,7 @@ fun ClickWheel(
                         if (deltaAngle < -180) deltaAngle += 360
 
                         if (Math.abs(deltaAngle) >= scrollThresholdDeg) {
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                            onTick()
                             if (deltaAngle > 0) onScrollNext() else onScrollPrevious()
                             previousAngle = currentAngle
                         }
@@ -125,38 +133,38 @@ fun ClickWheel(
             },
         contentAlignment = Alignment.Center
     ) {
-        Box(modifier = Modifier.size(280.dp)) {
+        Box(modifier = Modifier.size(wheelSize)) {
             Text(
                 "MENU",
                 color = colors.wheelText,
-                fontSize = 13.sp,
+                fontSize = (13 * scale).sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 18.dp)
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 18.dp * scale)
             )
             Text(
                 "▶ ❙❙",
                 color = colors.wheelText,
-                fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)
+                fontSize = (14 * scale).sp,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp * scale)
             )
             Text(
                 "◀◀",
                 color = colors.wheelText,
-                fontSize = 13.sp,
-                modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)
+                fontSize = (13 * scale).sp,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp * scale)
             )
             Text(
                 "▶▶",
                 color = colors.wheelText,
-                fontSize = 13.sp,
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp)
+                fontSize = (13 * scale).sp,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp * scale)
             )
         }
 
         // Anello leggermente incassato attorno al tasto centrale, per dare profondità
         Box(
             modifier = Modifier
-                .size(96.dp)
+                .size(96.dp * scale)
                 .clip(CircleShape)
                 .background(colors.bodyEdge.copy(alpha = 0.25f))
         )
@@ -164,7 +172,7 @@ fun ClickWheel(
         // Tasto centrale (Select) con gradiente e leggero "schiacciamento" al tocco
         Box(
             modifier = Modifier
-                .size(88.dp)
+                .size(88.dp * scale)
                 .shadow(elevation = if (isCenterPressed) 1.dp else 5.dp, shape = CircleShape)
                 .clip(CircleShape)
                 .background(
@@ -179,14 +187,13 @@ fun ClickWheel(
                     detectTapGestures(
                         onPress = {
                             isCenterPressed = true
+                            // Il feedback scatta alla pressione, non al rilascio:
+                            // è quello che dà la sensazione di tasto meccanico.
+                            onPress()
                             tryAwaitRelease()
                             isCenterPressed = false
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                         },
-                        onTap = {
-                            onSelectClick()
-                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
-                        }
+                        onTap = { onSelectClick() }
                     )
                 }
         )

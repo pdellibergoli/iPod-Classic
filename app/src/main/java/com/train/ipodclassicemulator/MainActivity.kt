@@ -47,13 +47,13 @@ class MainActivity : ComponentActivity() {
         } else {
             @Suppress("DEPRECATION")
             window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            )
+                    View.SYSTEM_UI_FLAG_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    )
         }
     }
 
@@ -65,24 +65,50 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val uri: Uri? = intent.data
-        if (uri != null && uri.toString().startsWith(viewModel.spotifyManager.redirectUri)) {
-            val authCode = uri.getQueryParameter("code")
-            if (authCode != null) {
-                viewModel.handleAuthCode(authCode, lifecycleScope = lifecycle)
-            }
-        }
+        handleSpotifyCallback(intent)
     }
 
     override fun onResume() {
         super.onResume()
-        if (viewModel.spotifyManager.spotifyAppRemote?.isConnected != true) {
-            viewModel.spotifyManager.connect(onConnected = {
-                Log.d("MainActivity", "App Remote riconnesso in onResume")
-            })
+
+        // Safety net: gestisce il callback OAuth se arriva via onResume invece di onNewIntent
+        // (può succedere con alcuni launchMode o versioni Android).
+        // handleSpotifyCallback pulisce intent.data subito dopo, così i successivi
+        // onResume non riprocessano lo stesso codice.
+        val currentIntent = intent
+        if (currentIntent?.data != null) {
+            handleSpotifyCallback(currentIntent)
+            // Non proseguire: handleAuthCode si occupa di connect e loadInitialDataIfReady
+            return
         }
-        if (viewModel.spotifyManager.savedWebToken != null) {
+
+        // Nessun callback OAuth pendente: riconnetti App Remote e ricarica dati
+        // solo se la sessione è già presente (evita connessioni durante il flusso di login)
+        if (viewModel.spotifyManager.hasStoredSession) {
+            if (viewModel.spotifyManager.spotifyAppRemote?.isConnected != true) {
+                viewModel.spotifyManager.connect(onConnected = {
+                    Log.d("MainActivity", "App Remote riconnesso in onResume")
+                })
+            }
             viewModel.loadInitialDataIfReady()
+        }
+    }
+
+    /**
+     * Estrae il codice OAuth dall'intent e lo consegna al ViewModel.
+     * Dopo la gestione, pulisce intent.data per evitare doppi processing
+     * nei successivi onResume.
+     */
+    private fun handleSpotifyCallback(intent: Intent) {
+        val uri: Uri? = intent.data
+        if (uri != null && uri.toString().startsWith(viewModel.spotifyManager.redirectUri)) {
+            val authCode = uri.getQueryParameter("code")
+            if (authCode != null) {
+                Log.d("MainActivity", "Auth code ricevuto: gestisco il callback Spotify")
+                viewModel.handleAuthCode(authCode)
+                // Pulisce l'intent così un eventuale onResume successivo non riprocessa lo stesso codice
+                setIntent(intent.apply { data = null })
+            }
         }
     }
 

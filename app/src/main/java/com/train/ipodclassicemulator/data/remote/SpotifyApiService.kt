@@ -24,6 +24,19 @@ interface SpotifyApiService {
         @Field("code_verifier") codeVerifier: String
     ): SpotifyTokenResponse
 
+    /**
+     * Rinnova l'access token in silenzio usando il refresh token.
+     * Nessun intervento dell'utente: evita di ricadere nel browser
+     * ogni volta che l'access token scade (dopo ~1 ora).
+     */
+    @FormUrlEncoded
+    @POST("https://accounts.spotify.com/api/token")
+    suspend fun refreshAccessToken(
+        @Field("client_id") clientId: String,
+        @Field("grant_type") grantType: String,
+        @Field("refresh_token") refreshToken: String
+    ): SpotifyTokenResponse
+
     // Fix #2 — offset + limit per paginazione
     @GET("me/playlists")
     suspend fun getUserPlaylists(

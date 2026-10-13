@@ -110,6 +110,12 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
     ) {
         val displayHeight = (maxHeight * 0.40f).coerceIn(220.dp, 500.dp)
 
+        // La click wheel prende tutto lo spazio libero sotto il display:
+        // minimo 280dp (la dimensione storica), massimo 340dp.
+        // 72dp = padding verticale della ruota (24 top + 32 bottom), 16dp di respiro.
+        val wheelSize = (maxHeight - displayHeight - 72.dp - 16.dp)
+            .coerceIn(280.dp, 340.dp)
+
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -155,6 +161,7 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
             // ── Click wheel ───────────────────────────────────────────────────
             ClickWheel(
                 modifier = Modifier.padding(bottom = 32.dp, top = 24.dp),
+                wheelSize = wheelSize,
                 onScrollNext = { viewModel.onScrollNext() },
                 onScrollPrevious = { viewModel.onScrollPrevious() },
                 onSelectClick = { viewModel.onSelectClick(themeManager) },
@@ -162,7 +169,10 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                 onMenuLongClick = { viewModel.onMenuLongClick() },
                 onPlayPauseClick = { viewModel.togglePlayPause() },
                 onNextClick = { viewModel.skipNext() },
-                onPreviousClick = { viewModel.skipPrevious() }
+                onPreviousClick = { viewModel.skipPrevious() },
+                // Vibrazione + click sonoro, con intensità scelta nelle Impostazioni
+                onTick = { viewModel.feedback.click() },
+                onPress = { viewModel.feedback.press() }
             )
         }
     }
@@ -244,7 +254,6 @@ private fun IPodScreenContent(
         )
 
         ScreenState.PLAYLISTS -> {
-            val colors = IPodTheme.colors
             Column(modifier = Modifier.fillMaxSize()) {
                 IPodStatusBar("Playlist", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
                 Spacer(Modifier.height(2.dp))
@@ -342,7 +351,9 @@ private fun IPodScreenContent(
                     SettingsScreen(
                         selectedIndex = vm.selectedSettingsIndex,
                         currentTheme = themeManager.currentTheme,
-                        listState = settingsListState
+                        listState = settingsListState,
+                        rows = vm.settingsRows,
+                        confirmLogout = vm.confirmLogout
                     )
                 }
             }

@@ -165,10 +165,6 @@ private fun CoverItem(
     val coverSize: Dp = if (isCenter) centerSize else sideSize
     val reflectionHeight: Dp = coverSize * 0.36f   // sempre proporzionale
 
-    // Lo spacing laterale scala proporzionalmente alla cover
-    val lateralSpacing = sideSize.value * 0.85f
-    //val reflectionHeight: Dp = if (isCenter) 36.dp else 24.dp
-
     // ── Animazioni fluide al cambio di selectedIndex ─────────────────────────
     val animSpec = spring<Float>(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium)
 

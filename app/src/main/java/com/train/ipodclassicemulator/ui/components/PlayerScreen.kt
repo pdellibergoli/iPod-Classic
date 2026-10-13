@@ -11,6 +11,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.*
@@ -24,8 +26,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -195,7 +195,7 @@ fun PlayerScreen(
             label = "progress_volume_switch"
         ) { isVolume ->
             if (isVolume) {
-                VolumeBar(volumePercent = volumePercent, lcdText = lcdText)
+                VolumeBar(volumePercent = volumePercent)
             } else {
                 ProgressBar(
                     progressMs = progressMs,
@@ -271,8 +271,7 @@ private fun ProgressBar(
 // ── Volume Bar (sostituisce il progress quando si cambia volume) ──────────────
 @Composable
 private fun VolumeBar(
-    volumePercent: Float,
-    lcdText: Color
+    volumePercent: Float
 ) {
     Row(
         modifier = Modifier
@@ -282,7 +281,7 @@ private fun VolumeBar(
     ) {
         // Icona volume basso
         Icon(
-            imageVector = Icons.Default.VolumeDown,
+            imageVector = Icons.AutoMirrored.Filled.VolumeDown,
             contentDescription = null,
             tint = Color(0xFF595959),
             modifier = Modifier.size(20.dp)
@@ -314,7 +313,7 @@ private fun VolumeBar(
 
         // Icona volume alto
         Icon(
-            imageVector = Icons.Default.VolumeUp,
+            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
             contentDescription = null,
             tint = Color(0xFF595959),
             modifier = Modifier.size(20.dp)

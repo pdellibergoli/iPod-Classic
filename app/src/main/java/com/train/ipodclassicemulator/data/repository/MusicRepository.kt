@@ -7,13 +7,18 @@ import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
 import com.train.ipodclassicemulator.data.model.SpotifyImage
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
+import com.train.ipodclassicemulator.data.model.SpotifyTokenResponse
 import com.train.ipodclassicemulator.data.remote.SpotifyApiService
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 class MusicRepository(private val spotifyManager: SpotifyManager) {
+
+    private val TAG = "MusicRepository"
 
     // Fix #10 — Retrofit è un singleton: non viene ricreato ad ogni istanza del repository
     private val apiService: SpotifyApiService get() = Companion.apiService
@@ -25,7 +30,111 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
      */
     private var webAccessToken: String? = spotifyManager.savedWebToken
 
+    /** Epoch ms di scadenza dell'access token corrente (0 = sconosciuto). */
+    private var tokenExpiresAtMs: Long = spotifyManager.tokenExpiresAt
+
     var onTokenExpired: (() -> Unit)? = null
+
+    // ── RINNOVO DEL TOKEN ─────────────────────────────────────────────────────
+
+    /** Garantisce che solo un task alla volta tenti il refresh. */
+    private val refreshMutex = Mutex()
+
+    /** Perché l'ultimo tentativo di refresh non ha funzionato. */
+    private enum class RefreshFailure { NONE, TRANSIENT, PERMANENT }
+    private var lastRefreshFailure = RefreshFailure.NONE
+
+    /** Tentativi di refresh falliti per errore di rete consecutivi. */
+    private var transientRefreshFailures = 0
+
+    /** true se l'access token in memoria è valido per almeno un altro minuto. */
+    private fun isTokenFresh(): Boolean =
+        webAccessToken != null &&
+                tokenExpiresAtMs > 0L &&
+                System.currentTimeMillis() < tokenExpiresAtMs - 60_000L
+
+    /**
+     * Rinnova l'access token con il refresh token, se quello corrente sta per scadere.
+     *
+     * @return true se al termine abbiamo un token che possiamo considerare valido.
+     */
+    suspend fun ensureFreshToken(): Boolean = refreshMutex.withLock {
+        if (isTokenFresh()) {
+            lastRefreshFailure = RefreshFailure.NONE
+            return@withLock true
+        }
+
+        val storedRefresh = spotifyManager.refreshToken
+        if (storedRefresh == null) {
+            // Sessioni salvate con versioni precedenti dell'app: niente refresh
+            // token, quindi ci limitiamo a usare l'access token così com'è.
+            // Se è davvero scaduto ci penserà il 401 a farci tornare al login.
+            lastRefreshFailure = RefreshFailure.NONE
+            return@withLock false
+        }
+
+        try {
+            val response = apiService.refreshAccessToken(
+                clientId = spotifyManager.spotifyClientId,
+                grantType = "refresh_token",
+                refreshToken = storedRefresh
+            )
+            storeToken(response)
+            transientRefreshFailures = 0
+            lastRefreshFailure = RefreshFailure.NONE
+            Log.d(TAG, "Access token rinnovato in silenzio, nessun login richiesto")
+            true
+        } catch (e: HttpException) {
+            // Spotify ha rifiutato il refresh token: la sessione è davvero finita.
+            transientRefreshFailures = 0
+            lastRefreshFailure = RefreshFailure.PERMANENT
+            Log.w(TAG, "Refresh token rifiutato (HTTP ${e.code()})")
+            false
+        } catch (e: Exception) {
+            // Errore di rete: non buttiamo via la sessione, riproviamo alla
+            // prossima chiamata. Solo dopo diversi fallimenti chiediamo il login.
+            transientRefreshFailures++
+            lastRefreshFailure = if (transientRefreshFailures >= 3)
+                RefreshFailure.PERMANENT else RefreshFailure.TRANSIENT
+            Log.e(TAG, "Refresh token fallito (rete)", e)
+            false
+        }
+    }
+
+    /**
+     * Token "Bearer" da usare per le chiamate API.
+     * Rinnova in silenzio quando serve; ritorna null solo se non c'è una sessione.
+     */
+    suspend fun authHeader(): String? {
+        if (webAccessToken == null) webAccessToken = spotifyManager.savedWebToken
+        if (webAccessToken == null && spotifyManager.refreshToken == null) return null
+
+        if (ensureFreshToken()) return webAccessToken
+
+        if (lastRefreshFailure == RefreshFailure.PERMANENT) {
+            expireSession()
+            return null
+        }
+        // Nessun refresh token o guasto transitorio: proviamoci con quello che c'è
+        return webAccessToken
+    }
+
+    /** Salva access token + scadenza (e il refresh token, quando presente). */
+    private fun storeToken(response: SpotifyTokenResponse) {
+        webAccessToken = response.access_token
+        tokenExpiresAtMs = System.currentTimeMillis() + response.expires_in * 1000L
+        spotifyManager.savedWebToken = response.access_token
+        spotifyManager.tokenExpiresAt = tokenExpiresAtMs
+        response.refresh_token?.let { spotifyManager.refreshToken = it }
+    }
+
+    /** Unica via d'uscita quando la sessione non è più recuperabile. */
+    private fun expireSession() {
+        Log.w(TAG, "Sessione Spotify non recuperabile: serve un nuovo login")
+        webAccessToken = null
+        spotifyManager.clearAllTokens()
+        onTokenExpired?.invoke()
+    }
 
     // ── AUTH ─────────────────────────────────────────────────────────────────
 
@@ -42,8 +151,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
                 redirectUri = spotifyManager.redirectUri,
                 codeVerifier = codeVerifier
             )
-            webAccessToken = response.access_token
-            spotifyManager.savedWebToken = response.access_token
+            storeToken(response)
             true
         } catch (e: Exception) {
             handleAuthFailure(e)
@@ -57,8 +165,14 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
     // ── PLAYLIST ──────────────────────────────────────────────────────────────
 
     // Fix #2 — paginazione completa con loop su `offset`
-    suspend fun getUserPlaylists(): List<PlaylistItem> {
-        val token = webAccessToken ?: return emptyList()
+    /**
+     * @return la lista delle playlist dell'utente, oppure **null se la chiamata è
+     *   fallita**. Distinguere "errore" da "lista davvero vuota" è fondamentale:
+     *   un errore non va memorizzato come "già caricato", altrimenti la lista non
+     *   verrebbe più mai riprovata fino al riavvio dell'app.
+     */
+    suspend fun getUserPlaylists(): List<PlaylistItem>? {
+        val token = authHeader() ?: return null
         val result = mutableListOf<PlaylistItem>()
         var offset = 0
         val limit = 50
@@ -70,12 +184,12 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
             } while (page.next != null)
             result
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore playlist", e); handleAuthFailure(e); result
+            Log.e("MusicRepository", "Errore playlist", e); handleAuthFailure(e); null
         }
     }
 
     suspend fun getTracksForPlaylist(playlistId: String): List<SpotifyTrackDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         val result = mutableListOf<SpotifyTrackDetails>()
         var offset = 0
         val limit = 100
@@ -95,7 +209,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // Fix #2 — paginazione completa
     suspend fun getSavedTracks(): List<SpotifyTrackDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         val result = mutableListOf<SpotifyTrackDetails>()
         var offset = 0
         val limit = 50
@@ -112,7 +226,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
     }
 
     suspend fun setTrackSaved(trackId: String, saved: Boolean): Boolean {
-        val token = webAccessToken ?: return false
+        val token = authHeader() ?: return false
         return try {
             val r = if (saved)
                 apiService.saveTrack("Bearer $token", trackId)
@@ -128,7 +242,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // Fix #2 — paginazione completa
     suspend fun getUserSavedAlbums(): List<SpotifyAlbumDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         val result = mutableListOf<SpotifyAlbumDetails>()
         var offset = 0
         val limit = 50
@@ -148,7 +262,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         albumId: String,
         albumImages: List<SpotifyImage>? = null
     ): List<SpotifyTrackDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         return try {
             apiService.getAlbumTracks("Bearer $token", albumId).items.map {
                 SpotifyTrackDetails(
@@ -173,7 +287,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // Fix #2 — paginazione completa (cursor-based per followed artists)
     suspend fun getUserFollowedArtists(): List<SpotifyArtistDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         val result = mutableListOf<SpotifyArtistDetails>()
         var after: String? = null
         val limit = 50
@@ -189,11 +303,8 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         }
     }
 
-    suspend fun getTracksForArtist(
-        artistId: String,
-        artistImages: List<SpotifyImage>? = null
-    ): List<SpotifyTrackDetails> {
-        val token = webAccessToken ?: return emptyList()
+    suspend fun getTracksForArtist(artistId: String): List<SpotifyTrackDetails> {
+        val token = authHeader() ?: return emptyList()
         return try {
             apiService.getArtistTopTracks("Bearer $token", artistId).tracks.map {
                 SpotifyTrackDetails(
@@ -214,7 +325,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
     // ── RICERCA ───────────────────────────────────────────────────────────────
 
     suspend fun searchSpotifyTracks(query: String): List<SpotifyTrackDetails> {
-        val token = webAccessToken ?: return emptyList()
+        val token = authHeader() ?: return emptyList()
         if (query.isBlank()) return emptyList()
         return try {
             apiService.searchTracks("Bearer $token", query).tracks.items
@@ -234,31 +345,37 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         Log.d("MusicRepository", "Tentativo di riproduzione: $trackUri")
         if (!contextUri.isNullOrEmpty()) {
             try {
-                playerApi?.play(contextUri)
-                playerApi?.skipToIndex(contextUri, trackIndex)
+                playerApi.play(contextUri)
+                playerApi.skipToIndex(contextUri, trackIndex)
             } catch (e: Exception) {
                 Log.e("MusicRepository", "Fallback a traccia singola", e)
-                playerApi?.play(trackUri)
+                playerApi.play(trackUri)
             }
         } else {
-            playerApi?.play(trackUri)
+            playerApi.play(trackUri)
         }
     }
 
     // ── GESTIONE ERRORI AUTH ──────────────────────────────────────────────────
 
-    private fun handleAuthFailure(e: Exception) {
-        if (e is HttpException && e.code() == 401) {
-            Log.w("MusicRepository", "HTTP 401 — token scaduto, cancello tutto.")
-            webAccessToken = null
-            spotifyManager.clearAllTokens()
-            onTokenExpired?.invoke()
+    private suspend fun handleAuthFailure(e: Exception) {
+        if (e !is HttpException || e.code() != 401) return
+
+        // Prima di tutto proviamo a rinnovare il token: se funziona l'utente
+        // non deve fare nulla e alla prossima chiamata torna a funzionare.
+        if (ensureFreshToken()) return
+
+        if (lastRefreshFailure == RefreshFailure.TRANSIENT) {
+            Log.w(TAG, "401 ma il refresh è fallito per la rete: mantengo la sessione")
+            return
         }
+        Log.w(TAG, "HTTP 401 e refresh non possibile — serve un nuovo login")
+        expireSession()
     }
 
     // 🟢 Controlla se un brano specifico è tra i preferiti su Spotify
     suspend fun isTrackSaved(trackId: String): Boolean {
-        val token = webAccessToken ?: return false
+        val token = authHeader() ?: return false
         return try {
             val response = apiService.checkTracksSaved(bearer = "Bearer $token", trackIds = trackId)
             response.firstOrNull() ?: false
@@ -272,7 +389,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // 🟢 Aggiunge il brano ai preferiti
     suspend fun saveSpotifyTrack(trackId: String): Boolean {
-        val token = webAccessToken ?: return false
+        val token = authHeader() ?: return false
         return try {
             val response = apiService.saveTrack(bearer = "Bearer $token", trackIds = trackId)
             response.isSuccessful
@@ -285,7 +402,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // 🟢 Rimuove il brano dai preferiti
     suspend fun removeSpotifyTrack(trackId: String): Boolean {
-        val token = webAccessToken ?: return false
+        val token = authHeader() ?: return false
         return try {
             val response = apiService.removeTrack(bearer = "Bearer $token", trackIds = trackId)
             response.isSuccessful
@@ -298,7 +415,7 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // 🟢 Invia il comando di Shuffle avanzato direttamente ai server web di Spotify
     suspend fun setSpotifyShuffleMode(enabled: Boolean): Boolean {
-        val token = webAccessToken ?: return false
+        val token = authHeader() ?: return false
         return try {
             val response = apiService.setWebShuffleMode(bearer = "Bearer $token", state = enabled)
             response.isSuccessful
