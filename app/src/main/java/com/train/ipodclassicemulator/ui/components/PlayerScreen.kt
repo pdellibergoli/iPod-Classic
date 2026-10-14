@@ -15,6 +15,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -56,6 +58,9 @@ private val trackBackground = Brush.verticalGradient(
     )
 )
 
+/** `Repeat.ONE` dell'SDK Spotify (0 = off, 1 = uno, 2 = tutti). */
+private const val REPEAT_ONE = 1
+
 @Composable
 fun PlayerScreen(
     track: SpotifyTrackDetails,
@@ -64,10 +69,13 @@ fun PlayerScreen(
     durationMs: Long,
     isLiked: Boolean,
     playbackMode: Int,
+    /** Modalità repeat di Spotify: 0 = off, 1 = uno, 2 = tutti. */
+    repeatMode: Int = 0,
     volumePercent: Float = 0f,       // 0..1
     showVolumeBar: Boolean = false,   // true → mostra volume al posto del progress
     onLikeToggle: () -> Unit,
     onModeToggle: () -> Unit,
+    onRepeatToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = IPodTheme.colors
@@ -157,7 +165,7 @@ fun PlayerScreen(
                     AutoScrollText(track.album?.name ?: "Album Sconosciuto", 13.sp, false, Color.Gray)
                 }
 
-                // Cuore + Shuffle
+                // Cuore + Shuffle + Ripeti
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -179,6 +187,17 @@ fun PlayerScreen(
                             painter = painterResource(id = if (playbackMode == 1) R.drawable.shuffle_on else R.drawable.shuffle_off),
                             contentDescription = "Shuffle",
                             tint = if (playbackMode == 1) colors.progressBar else lcdText.copy(alpha = 0.4f),
+                            modifier = Modifier.size(35.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    IconButton(onClick = onRepeatToggle, modifier = Modifier.size(35.dp)) {
+                        Icon(
+                            // Con "ripeti uno" l'icona cambia, come nell'app Spotify
+                            imageVector = if (repeatMode == REPEAT_ONE) Icons.Default.RepeatOne
+                                          else Icons.Default.Repeat,
+                            contentDescription = "Ripeti",
+                            tint = if (repeatMode != 0) colors.progressBar else lcdText.copy(alpha = 0.4f),
                             modifier = Modifier.size(35.dp)
                         )
                     }
@@ -269,8 +288,8 @@ private fun ProgressBar(
 }
 
 // ── Volume Bar (sostituisce il progress quando si cambia volume) ──────────────
-@Composable
 // `internal` perché la riusa anche LyricsScreen sotto forma di overlay.
+@Composable
 internal fun VolumeBar(
     volumePercent: Float
 ) {

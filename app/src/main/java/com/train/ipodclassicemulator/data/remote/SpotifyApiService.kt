@@ -4,6 +4,8 @@ import com.train.ipodclassicemulator.data.model.SpotifyAlbumTracksResponse
 import com.train.ipodclassicemulator.data.model.SpotifyArtistTopTracksResponse
 import com.train.ipodclassicemulator.data.model.SpotifyFollowedArtistsResponse
 import com.train.ipodclassicemulator.data.model.SpotifyPlaylistTracksResponse
+import com.train.ipodclassicemulator.data.model.SpotifyQueueResponse
+import com.train.ipodclassicemulator.data.model.SpotifyRecentlyPlayedResponse
 import com.train.ipodclassicemulator.data.model.SpotifySavedAlbumsResponse
 import com.train.ipodclassicemulator.data.model.SpotifySavedTracksResponse
 import com.train.ipodclassicemulator.data.model.SpotifySearchResponse
@@ -111,11 +113,12 @@ interface SpotifyApiService {
         @Query("market") market: String = "IT"
     ): SpotifyArtistTopTracksResponse
 
+    /** Cerca brani, artisti e album in un colpo solo. */
     @GET("search")
-    suspend fun searchTracks(
+    suspend fun search(
         @Header("Authorization") bearer: String,
         @Query("q") query: String,
-        @Query("type") type: String = "track",
+        @Query("type") type: String = "track,artist,album",
         @Query("market") market: String = "IT",
         @Query("limit") limit: Int = 30
     ): SpotifySearchResponse
@@ -126,4 +129,28 @@ interface SpotifyApiService {
         @Query("state") state: Boolean,
         @Query("device_id") deviceId: String? = null
     ): Response<Unit>
+
+    /** Ultime tracce riprodotte. Richiede `user-read-recently-played`. */
+    @GET("me/player/recently-played")
+    suspend fun getRecentlyPlayed(
+        @Header("Authorization") bearer: String,
+        @Query("limit") limit: Int = 50
+    ): SpotifyRecentlyPlayedResponse
+
+    /** Coda di riproduzione. Richiede `user-read-playback-state`. */
+    @GET("me/player/queue")
+    suspend fun getPlayerQueue(
+        @Header("Authorization") bearer: String
+    ): SpotifyQueueResponse
+
+    /** Aggiunge una traccia in coda a una playlist. Richiede `playlist-modify-*`. */
+    @POST("playlists/{id}/tracks")
+    suspend fun addTracksToPlaylist(
+        @Header("Authorization") bearer: String,
+        @Path("id") playlistId: String,
+        @Body body: AddTracksBody
+    ): Response<Unit>
 }
+
+/** Corpo di `POST /playlists/{id}/tracks`. */
+data class AddTracksBody(val uris: List<String>)

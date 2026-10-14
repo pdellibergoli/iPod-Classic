@@ -1,8 +1,13 @@
 package com.train.ipodclassicemulator.data.remote
 
 import android.util.Log
+import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.io.File
+import java.security.MessageDigest
 import java.text.Normalizer
 import kotlin.math.abs
 
@@ -14,6 +19,21 @@ private const val TAG = "LyricsRepository"
  * singole basta, così non si attaccano le lyrics sbagliate.
  */
 private const val MIN_SCORE = 60
+
+// ── Formato della cache su disco ──────────────────────────────────────────────
+
+private const val KIND_SYNCED = "synced"
+private const val KIND_PLAIN = "plain"
+
+/**
+ * Voce serializzata in cache. Tutti i parametri hanno un default perché a
+ * Gson serve un costruttore senza argomenti per istanziarla.
+ */
+private data class CachedLyrics(
+    val kind: String = "",
+    val lines: List<LyricLine>? = null,
+    val text: String? = null
+)
 
 /** Esito della ricerca delle lyrics di un brano. */
 sealed class LyricsResult {
@@ -30,10 +50,15 @@ sealed class LyricsResult {
 /**
  * Scarica le lyrics da LRCLIB e le tiene in cache.
  *
- * Una sola chiamata per brano — i candidati li peschiamo noi in base a titolo,
- * artista e durata.
+ * Due livelli: la mappa in memoria, e i file sotto `cacheDir` che sopravvivono
+ * al riavvio dell'app. Una sola chiamata per brano — i candidati li peschiamo
+ * noi in base a titolo, artista e durata.
+ *
+ * @param cacheDir cartella dove scrivere la cache; `null` disabilita il disco
  */
-class LyricsRepository {
+class LyricsRepository(private val cacheDir: File? = null) {
+
+    private val gson = Gson()
 
     private val apiService: LyricsApiService by lazy {
         Retrofit.Builder()
@@ -65,6 +90,14 @@ class LyricsRepository {
 
         val key = normalize(title) + "|" + normalize(artist)
         synchronized(cache) { cache[key] }?.let { return it }
+
+        // Memoria vuota: prima il disco, poi la rete
+        val file = cacheFile(key)
+        loadFromDisk(file)?.let {
+            synchronized(cache) { cache[key] = it }
+            return it
+        }
+
         val result = try {
             val candidates = apiService.search(
                 query = "$title $artist",
@@ -77,7 +110,64 @@ class LyricsRepository {
         }
 
         synchronized(cache) { cache[key] = result }
+        saveToDisk(file, result)
         return result
+    }
+
+    // ── Cache su disco ────────────────────────────────────────────────────────
+
+    /** SHA-1 del nome: i titoli possono contenere qualsiasi carattere. */
+    private fun cacheFile(key: String): File? {
+        val dir = cacheDir ?: return null
+        val digest = MessageDigest.getInstance("SHA-1")
+            .digest(key.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return File(dir, "$digest.json")
+    }
+
+    private suspend fun loadFromDisk(file: File?): LyricsResult? {
+        file ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!file.isFile) return@withContext null
+                val cached = gson.fromJson(file.readText(), CachedLyrics::class.java)
+                    ?: return@withContext null
+                when (cached.kind) {
+                    KIND_SYNCED -> cached.lines
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { LyricsResult.Synced(it) }
+                    KIND_PLAIN -> cached.text
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { LyricsResult.Plain(it) }
+                    else -> null
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Lettura cache lyrics fallita", e)
+                null
+            }
+        }
+    }
+
+    private suspend fun saveToDisk(file: File?, result: LyricsResult) {
+        file ?: return
+        // I "non trovati" NON vengono persistiti: la community di LRCLIB può
+        // aggiungere la lyrics in seguito, e una richiesta in più a sessione
+        // costa meno di una cache negativa che non sblocca mai.
+        if (result is LyricsResult.None) return
+
+        val cached = when (result) {
+            is LyricsResult.Synced -> CachedLyrics(KIND_SYNCED, lines = result.lines)
+            is LyricsResult.Plain -> CachedLyrics(KIND_PLAIN, text = result.text)
+            LyricsResult.None -> return
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                file.parentFile?.mkdirs()
+                file.writeText(gson.toJson(cached))
+            } catch (e: Exception) {
+                Log.w(TAG, "Scrittura cache lyrics fallita", e)
+            }
+        }
     }
 
     // ── Selezione del brano giusto ────────────────────────────────────────────

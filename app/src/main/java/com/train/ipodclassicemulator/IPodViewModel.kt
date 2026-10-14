@@ -11,9 +11,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.spotify.protocol.types.PlayerState
+import com.spotify.protocol.types.Repeat
 import com.spotify.protocol.types.Track
 import com.train.ipodclassicemulator.data.model.PlaylistItem
 import com.train.ipodclassicemulator.data.model.PlaylistTracksInfo
+import com.train.ipodclassicemulator.data.model.SearchResults
 import com.train.ipodclassicemulator.data.model.SpotifyAlbumDetails
 import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
@@ -43,20 +45,25 @@ private const val END_OF_TRACK_MS = 1_500L   // finestra di "fine brano"
 private const val MIN_ADVANCE_MS = 3_000L    // anti doppio avanzamento dei Preferiti
 
 enum class ScreenState {
-    CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, TRACKS, TRACK_DETAILS, SETTINGS
+    CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, SEARCH_RESULTS, TRACKS, TRACK_DETAILS, SETTINGS, ABOUT
 }
+
+/** Sezione scelta dall'utente nel menu "Risultati". */
+enum class SearchResultKind { TRACKS, ARTISTS, ALBUMS }
 
 // ── Impostazioni ─────────────────────────────────────────────────────────────
 
 /** Blocco visivo della schermata Impostazioni (separato da una riga). */
 enum class SettingsSection(val title: String) {
     THEMES("Temi"),
+    DISPLAY("Schermo"),
     FEEDBACK("Feedback"),
-    ACCOUNT("Account")
+    ACCOUNT("Account"),
+    SYSTEM("Sistema")
 }
 
 /** Determina cosa fa il tasto Select quando la riga è selezionata. */
-enum class SettingsRowKind { THEME, HAPTIC, SOUND, LOGOUT }
+enum class SettingsRowKind { THEME, HAPTIC, SOUND, BACKLIGHT, LOGOUT, ABOUT }
 
 /**
  * Riga della schermata Impostazioni.
@@ -96,7 +103,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     var selectedSettingsIndex by mutableStateOf(0)
 
     val mainMenuOptions = listOf("Spotify", "Settings", "Shuffle Songs", "Now Playing")
-    val spotifyMenuOptions = listOf("Playlist", "Album", "Artisti", "Ricerca")
+    val spotifyMenuOptions = listOf("Playlist", "Album", "Artisti", "Ricerca", "Cronologia", "Coda")
 
     // ── Impostazioni ──────────────────────────────────────────────────────────
 
@@ -117,6 +124,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 )
             )
         }
+        add(
+            SettingsRow(
+                kind = SettingsRowKind.BACKLIGHT,
+                label = "Retroilluminazione",
+                section = SettingsSection.DISPLAY,
+                value = backlightLabel
+            )
+        )
         add(
             SettingsRow(
                 kind = SettingsRowKind.HAPTIC,
@@ -140,16 +155,135 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 section = SettingsSection.ACCOUNT
             )
         )
+        add(
+            SettingsRow(
+                kind = SettingsRowKind.ABOUT,
+                label = "Informazioni",
+                section = SettingsSection.SYSTEM,
+                value = appVersion
+            )
+        )
     }
 
     /** true quando "Disconnetti Spotify" è selezionato e si aspetta la seconda pressione. */
     var confirmLogout by mutableStateOf(false)
+
+    // ── Retroilluminazione ────────────────────────────────────────────────────
+
+    /** Ritardi possibili in secondi; 0 = la LCD non si attenua mai. */
+    val backlightOptions = listOf(0, 15, 30, 60)
+
+    private val displayPrefs = application.getSharedPreferences(
+        "ipod_display_prefs", android.content.Context.MODE_PRIVATE
+    )
+
+    /** Secondi di inattività prima che la LCD si attenui (0 = mai). */
+    var backlightDelaySec by mutableStateOf(displayPrefs.getInt("backlight_delay_sec", 30))
+        private set
+
+    /** true quando la LCD è attenuata per inattività. */
+    var isScreenDimmed by mutableStateOf(false)
+        private set
+
+    /** Etichetta mostrata a destra della riga "Retroilluminazione". */
+    val backlightLabel: String
+        get() = if (backlightDelaySec <= 0) "Mai" else "$backlightDelaySec s"
+
+    /** Versione dell'app, mostrata a destra della riga "Informazioni". */
+    val appVersion: String = try {
+        @Suppress("DEPRECATION")
+        val info = application.packageManager.getPackageInfo(application.packageName, 0)
+        info.versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
+    }
+
+    private var lastInteractionAt = SystemClock.elapsedRealtime()
+
+    /**
+     * Registra un'attività dell'utente: riaccende la LCD e riavvia il conto alla
+     * rovescia. Viene chiamato da ogni tick della ruota e da ogni pressione
+     * di tasto, quindi basta un solo punto d'aggancio.
+     */
+    fun noteInteraction() {
+        lastInteractionAt = SystemClock.elapsedRealtime()
+        isScreenDimmed = false
+    }
+
+    /** Cicla il ritardo di attenuazione: Mai → 15 s → 30 s → 60 s → Mai. */
+    fun cycleBacklight() {
+        val position = backlightOptions.indexOf(backlightDelaySec).coerceAtLeast(0)
+        backlightDelaySec = backlightOptions[(position + 1) % backlightOptions.size]
+        displayPrefs.edit().putInt("backlight_delay_sec", backlightDelaySec).apply()
+        noteInteraction()
+    }
+
+    /**
+     * Attenua la LCD dopo il ritardo scelto e la riaccende al primo input.
+     *
+     * Un controllo al secondo è sufficiente (e costa una scrittura di stato che,
+     * se il valore non cambia, non provoca nessuna ricomposizione).
+     */
+    private fun startBacklightWatcher() {
+        viewModelScope.launch {
+            while (true) {
+                delay(1_000)
+                val delaySec = backlightDelaySec
+                isScreenDimmed = if (delaySec <= 0) false
+                    else SystemClock.elapsedRealtime() - lastInteractionAt >= delaySec * 1_000L
+            }
+        }
+    }
 
     // ── Data lists ────────────────────────────────────────────────────────────
     var playlists by mutableStateOf<List<PlaylistItem>>(emptyList())
     var albums by mutableStateOf<List<SpotifyAlbumDetails>>(emptyList())
     var artists by mutableStateOf<List<SpotifyArtistDetails>>(emptyList())
     var tracks by mutableStateOf<List<SpotifyTrackDetails>>(emptyList())
+
+    /**
+     * URI di contesto con cui riprodurre [tracks] (playlist/album/artista).
+     *
+     * Va letto da chi HA PRODOTTO la lista, non dalla voce di menu evidenziata:
+     * un album trovato con la ricerca apre la lista con il menu su "Ricerca",
+     * ma va suonato come album. Resta valido finché non se ne produce un'altra,
+     * quindi le schermate che rientrano nella lista (MENU, "aggiungi a") lo
+     * lasciano invariato.
+     */
+    private var trackListContextUri: String = ""
+
+    /**
+     * Titolo della status bar nella lista brani.
+     *
+     * Dipende da quale voce del menu Spotify l'ha prodotta, che è esattamente
+     * quella a cui torna il MENU: così il titolo e la "freccia indietro"
+     * raccontano la stessa cosa.
+     */
+    val trackListTitle: String
+        get() = when (selectedSpotifyMenuIndex) {
+            3 -> if (searchResults != null) "Risultati" else "Brani"
+            4 -> "Cronologia"
+            5 -> "Coda"
+            else -> "Brani"
+        }
+
+    /** Breve messaggio mostrato al posto del titolo della lista brani. */
+    var listNotice by mutableStateOf<String?>(null)
+        private set
+
+    private var noticeJob: Job? = null
+
+    /** Mostra `text` per 2,5 s; `null` lo cancella subito. */
+    private fun showListNotice(text: String?) {
+        noticeJob?.cancel()
+        listNotice = text
+        if (text != null) {
+            noticeJob = viewModelScope.launch {
+                delay(2_500)
+                listNotice = null
+            }
+        }
+    }
 
     /**
      * true **solo** quando l'elenco playlist è stato scaricato con successo.
@@ -199,6 +333,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     var isTrackPlaying by mutableStateOf(false)
     var isCurrentTrackLiked by mutableStateOf(false)
     var currentPlaybackMode by mutableStateOf(0)
+    /**
+     * Modalità di ripetizione corrente, nei valori di `Repeat` di Spotify:
+     * 0 = OFF, 1 = ONE, 2 = ALL. Viene letta dal player, non indovinata.
+     */
+    var repeatMode by mutableStateOf(Repeat.OFF)
     // Workaround for PlayerState bug in Favorites playlist
     var isLocalShuffleEnabled by mutableStateOf(false)
 
@@ -207,7 +346,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Lyrics ────────────────────────────────────────────────────────────────
 
-    private val lyricsRepository = LyricsRepository()
+    private val lyricsRepository = LyricsRepository(
+        // cacheDir del Context: sopravvive ai riavvii finché il sistema non la purga
+        java.io.File(application.cacheDir, "lyrics")
+    )
 
     /** true quando al posto delle info di riproduzione vanno mostrate le lyrics. */
     var showLyrics by mutableStateOf(false)
@@ -233,6 +375,48 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     )
     var selectedCharIndex by mutableStateOf(1)
     var searchQuery by mutableStateOf("")
+
+    // ── Risultati di ricerca ──────────────────────────────────────────────────
+
+    /** Esito dell'ultima ricerca; `null` finché non si cerca. */
+    var searchResults by mutableStateOf<SearchResults?>(null)
+        private set
+
+    /**
+     * true quando le schermate Album/Artisti stanno mostrando risultati di
+     * ricerca e non le liste "vere" (salvate/seguite).
+     *
+     * Serve a non sovrascrivere le liste salvate con i risultati: quando si
+     * rientra dal menu le liste vanno ricaricate da capo.
+     */
+    private var searchListsActive by mutableStateOf(false)
+
+    /** Lo stanno leggendo le schermate, per cambiare le etichette. */
+    val viewingSearchResults: Boolean get() = searchListsActive
+
+    /** Voce selezionata nel menu "Risultati". */
+    var selectedSearchResultIndex by mutableStateOf(0)
+
+    /** Voce del menu "Risultati": solo le sezioni che hanno davvero qualcosa. */
+    val searchResultRows: List<Pair<SearchResultKind, String>>
+        get() = searchResults?.let { r ->
+            buildList {
+                if (r.tracks.isNotEmpty()) add(SearchResultKind.TRACKS to "Brani (${r.tracks.size})")
+                if (r.artists.isNotEmpty()) add(SearchResultKind.ARTISTS to "Artisti (${r.artists.size})")
+                if (r.albums.isNotEmpty()) add(SearchResultKind.ALBUMS to "Album (${r.albums.size})")
+            }
+        } ?: emptyList()
+
+    /**
+     * Album mostrati in schermata: risultati di ricerca se si è arrivati da
+     * lì, altrimenti gli album salvati.
+     */
+    val displayAlbums: List<SpotifyAlbumDetails>
+        get() = if (searchListsActive) searchResults?.albums.orEmpty() else albums
+
+    /** Come [displayAlbums] ma per gli artisti seguiti. */
+    val displayArtists: List<SpotifyArtistDetails>
+        get() = if (searchListsActive) searchResults?.artists.orEmpty() else artists
 
     // ── UI feedback ───────────────────────────────────────────────────────────
     var isLoading by mutableStateOf(false)
@@ -268,6 +452,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             screenState = ScreenState.CREDENTIALS_SETUP
         }
         startProgressTicker()
+        startBacklightWatcher()
     }
 
     // ── Init / auth ───────────────────────────────────────────────────────────
@@ -373,14 +558,15 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         spotifyManager.clearAllTokens()
 
         playlists = emptyList()
+        playlistsLoaded = false
         showLyrics = false
         lyrics = null
         lyricsTrackId = null
         lyricsJob?.cancel()
-        playlistsLoaded = false
         albums = emptyList()
         artists = emptyList()
         tracks = emptyList()
+        trackListContextUri = ""
         favoritesTracks = emptyList()
         favoritesTrackIndex = 0
         tracksFromFavorites = false
@@ -392,6 +578,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         isTrackPlaying = false
         isCurrentTrackLiked = false
         currentPlaybackMode = 0
+        repeatMode = Repeat.OFF
         isLocalShuffleEnabled = false
         showVolumeBar = false
         selectedPlaylistIndex = 0
@@ -399,6 +586,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         selectedArtistIndex = 0
         selectedTrackIndex = 0
         selectedSpotifyMenuIndex = 0
+        searchResults = null
+        searchListsActive = false
+        selectedSearchResultIndex = 0
+        cancelAddToPlaylist()
+        showListNotice(null)
 
         // Ricrea il repository senza token e rilegga il listener del player.
         // autoLoginAttempted è già true: niente browser, solo il pulsante in-app.
@@ -428,6 +620,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     spotifyManager.isShuffling = isShuffle
                     isLocalShuffleEnabled = isShuffle
                 }
+
+                // Anche il repeat è deciso da Spotify: qui ci limitiamo a rifletterlo,
+                // così l'icona resta giusta se il brano cambia dall'app ufficiale.
+                repeatMode = playerState.playbackOptions.repeatMode
 
                 track.imageUri?.raw?.let { raw ->
                     val imageId = raw.substringAfter("image:")
@@ -466,6 +662,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             trackDurationMs = track.duration
             currentProgressMs = state.playbackPosition
             isTrackPlaying = !state.isPaused
+            repeatMode = state.playbackOptions.repeatMode
 
             track.imageUri?.raw?.takeIf { it.isNotEmpty() }?.let { raw ->
                 currentCoverUrl = "https://i.scdn.co/image/${raw.substringAfter("image:")}"
@@ -642,14 +839,20 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadPlaylistsIfNeeded() {
+        val from = screenState
         if (playlistsLoaded) { screenState = ScreenState.PLAYLISTS; return }
         viewModelScope.launch {
             syncPlaylists()
-            screenState = ScreenState.PLAYLISTS
+            // Si apre la lista solo se l'utente è ancora lì ad aspettarla:
+            // un MENU premuto durante lo sync non deve far comparire una
+            // schermata a vuoto dal nulla.
+            if (screenState == from) screenState = ScreenState.PLAYLISTS
         }
     }
 
     fun loadAlbumsIfNeeded() {
+        // Entrando dal menu si torna agli album VERI, non ai risultati ricerca
+        searchListsActive = false
         if (albums.isNotEmpty()) { screenState = ScreenState.ALBUMS; return }
         viewModelScope.launch {
             isLoading = true; statusText = "Scarico Album..."
@@ -659,6 +862,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadArtistsIfNeeded() {
+        // Stesso ragionamento degli album: uscendo dalla ricerca si torna
+        // alla lista degli artisti seguiti
+        searchListsActive = false
         if (artists.isNotEmpty()) { screenState = ScreenState.ARTISTS; return }
         viewModelScope.launch {
             isLoading = true; statusText = "Scarico Artisti..."
@@ -668,6 +874,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadTracksForPlaylist() {
+        // Il Select ha due significati: se si è arrivati dal "centro lungo" su
+        // un brano, la playlist selezionata è la DESTINAZIONE dell'aggiunta
+        if (addingToPlaylist) { commitAddToPlaylist(); return }
+
         val playlist = playlists.getOrNull(selectedPlaylistIndex) ?: return
         val isFavorites = playlist.id == FAVORITES_ID
         viewModelScope.launch {
@@ -679,6 +889,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             }
             tracks = list
             tracksFromFavorites = isFavorites
+            trackListContextUri = if (isFavorites) "" else playlist.uri
+            showListNotice(null)
             if (isFavorites) {
                 favoritesTracks = list
                 // Se quei Preferiti sono già in riproduzione, ripartiamo dalla traccia giusta
@@ -693,33 +905,210 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Aggiungi a playlist ───────────────────────────────────────────────────
+
+    /** true quando la lista playlist è aperta per SCEGLIERE la destinazione. */
+    var addingToPlaylist by mutableStateOf(false)
+        private set
+
+    private var pendingPlaylistTrack: SpotifyTrackDetails? = null
+
+    /**
+     * Centro lungo su un brano in lista: prepara l'aggiunta e apre la lista
+     * playlist. L'azione si esegue solo alla scelta, o si annulla con MENU.
+     */
+    fun startAddToPlaylist() {
+        if (screenState != ScreenState.TRACKS) return
+        val track = tracks.getOrNull(selectedTrackIndex) ?: return
+        pendingPlaylistTrack = track
+        addingToPlaylist = true
+        selectedPlaylistIndex = 0
+        showListNotice(null)
+        loadPlaylistsIfNeeded()
+    }
+
+    /** QUALSIASI uscita dalla lista playlist annulla l'aggiunta. */
+    private fun cancelAddToPlaylist() {
+        pendingPlaylistTrack = null
+        addingToPlaylist = false
+    }
+
+    /** Playlist scelta: aggiunge il brano e torna alla lista da cui si partiva. */
+    private fun commitAddToPlaylist() {
+        val from = screenState
+        val track = pendingPlaylistTrack
+        val playlist = playlists.getOrNull(selectedPlaylistIndex)
+        cancelAddToPlaylist()
+        if (playlist == null) {
+            // Nessuna lista (sync fallito): si torna indietro con un motivo
+            showListNotice("Playlist non disponibili")
+            screenState = ScreenState.TRACKS
+            return
+        }
+        if (track == null) {
+            screenState = ScreenState.TRACKS
+            return
+        }
+
+        // I Preferiti sono una playlist virtuale: l'equivalente è salvare il
+        // brano, quindi si passa dall'API "brani che mi piacciono"
+        if (playlist.id == FAVORITES_ID) {
+            viewModelScope.launch {
+                val ok = musicRepository?.saveSpotifyTrack(track.id) == true
+                if (ok && playingTrackDetails?.id == track.id) isCurrentTrackLiked = true
+                // Se l'utente è già uscito con MENU, il messaggio non ha più
+                // una lista dove stare
+                if (screenState != from) return@launch
+                showListNotice(if (ok) "Salvato nei Preferiti" else "Salvataggio non riuscito")
+                screenState = ScreenState.TRACKS
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            isLoading = true; statusText = "Aggiungo il brano..."
+            val outcome = musicRepository?.addTrackToPlaylist(playlist.id, track.uri)
+            isLoading = false
+            if (screenState != from) return@launch
+            showListNotice(
+                when (outcome) {
+                    true -> "Aggiunto a \"${playlist.name}\""
+                    // 403: manca playlist-modify-*, sul token attuale
+                    null -> "Permessi mancanti: rifai il login"
+                    else -> "Aggiunta non riuscita"
+                }
+            )
+            screenState = ScreenState.TRACKS
+        }
+    }
+
+    /** Centro lungo: nelle liste brani apre "aggiungi a playlist". */
+    fun onSelectLongClick() {
+        startAddToPlaylist()
+    }
+
     fun loadTracksForAlbum() {
-        val album = albums.getOrNull(selectedAlbumIndex) ?: return
+        val album = displayAlbums.getOrNull(selectedAlbumIndex) ?: return
         viewModelScope.launch {
             isLoading = true; statusText = "Carico brani album..."
             tracks = musicRepository?.getTracksForAlbum(album.id, album.images) ?: emptyList()
             tracksFromFavorites = false
+            trackListContextUri = album.uri
+            showListNotice(null)
             selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
         }
     }
 
     fun loadTracksForArtist() {
-        val artist = artists.getOrNull(selectedArtistIndex) ?: return
+        val artist = displayArtists.getOrNull(selectedArtistIndex) ?: return
         viewModelScope.launch {
             isLoading = true; statusText = "Carico brani artista..."
             tracks = musicRepository?.getTracksForArtist(artist.id) ?: emptyList()
             tracksFromFavorites = false
+            trackListContextUri = artist.uri
+            showListNotice(null)
             selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
         }
     }
 
+    /**
+     * Esegue la ricerca (brani + artisti + album) e apre il menu dei
+     * risultati, dove si sceglie quale sezione aprire.
+     */
     fun searchTracks() {
         if (searchQuery.isBlank()) return
+        val from = screenState
         viewModelScope.launch {
             isLoading = true; statusText = "Ricerca in corso..."
-            tracks = musicRepository?.searchSpotifyTracks(searchQuery) ?: emptyList()
+            val results = musicRepository?.searchSpotify(searchQuery)
+            isLoading = false
+            // Se l'utente è uscito durante la ricerca, non si apre il menu
+            if (screenState != from) return@launch
+            searchResults = results
+            searchListsActive = false
+            selectedSearchResultIndex = 0
+            showListNotice(null)
+            screenState = ScreenState.SEARCH_RESULTS
+        }
+    }
+
+    /** Apre una sezione del menu risultati ricerca. */
+    fun openSearchResult(kind: SearchResultKind) {
+        when (kind) {
+            SearchResultKind.TRACKS -> {
+                // I brani sono "in mutuo possesso" col resto: vengono sempre
+                // ricaricati quando si entra in playlist/album/artista, quindi
+                // qui li possiamo sovrascrivere senza sorprese
+                tracks = searchResults?.tracks.orEmpty()
+                tracksFromFavorites = false
+                trackListContextUri = ""
+                selectedTrackIndex = 0
+                showListNotice(null)
+                screenState = ScreenState.TRACKS
+            }
+
+            SearchResultKind.ARTISTS -> {
+                searchListsActive = true
+                selectedArtistIndex = 0
+                screenState = ScreenState.ARTISTS
+            }
+
+            SearchResultKind.ALBUMS -> {
+                searchListsActive = true
+                selectedAlbumIndex = 0
+                screenState = ScreenState.ALBUMS
+            }
+        }
+    }
+
+    // ── Cronologia e Coda ─────────────────────────────────────────────────────
+
+    fun loadChronology() = loadRemoteTrackList(
+        status = "Scarico la cronologia...",
+        emptyNotice = "Nessun brano in cronologia",
+        fetch = { musicRepository?.getRecentlyPlayed() }
+    )
+
+    fun loadQueue() = loadRemoteTrackList(
+        status = "Leggo la coda...",
+        emptyNotice = "La coda è vuota",
+        fetch = { musicRepository?.getPlaybackQueue() }
+    )
+
+    /**
+     * Caricamento condiviso da Cronologia e Coda: entrambe producono una lista
+     * di brani apribile nella schermata TRACCIE, con il MENU che torna al menu
+     * Spotify (le due voci non hanno un livello sotto di loro).
+     *
+     * @param fetch `null` = lo scope non è concesso sul token corrente.
+     */
+    private fun loadRemoteTrackList(
+        status: String,
+        emptyNotice: String,
+        fetch: suspend () -> List<SpotifyTrackDetails>?
+    ) {
+        val from = screenState
+        viewModelScope.launch {
+            isLoading = true; statusText = status
+            val list = fetch()
+            isLoading = false
+            // Se durante lo scarico la sessione è caduta o l'utente è uscito,
+            // non si apre una lista che non ha più senso
+            if (screenState != from) return@launch
+
+            tracks = list.orEmpty()
             tracksFromFavorites = false
-            selectedTrackIndex = 0; screenState = ScreenState.TRACKS; isLoading = false
+            // Lista piatta: niente contesto, si riproduce la traccia scelta
+            trackListContextUri = ""
+            selectedTrackIndex = 0
+            showListNotice(
+                when {
+                    list == null -> "Permessi mancanti: rifai il login"
+                    list.isEmpty() -> emptyNotice
+                    else -> null
+                }
+            )
+            screenState = ScreenState.TRACKS
         }
     }
 
@@ -732,12 +1121,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         // selezione corrente: quest'ultima cambia mentre l'utente continua ad ascoltare.
         val isFavorites = tracksFromFavorites
 
-        val contextUri: String = when (selectedSpotifyMenuIndex) {
-            0 -> if (isFavorites) "" else playlists.getOrNull(selectedPlaylistIndex)?.uri ?: ""
-            1 -> albums.getOrNull(selectedAlbumIndex)?.uri ?: ""    // Album
-            2 -> artists.getOrNull(selectedArtistIndex)?.uri ?: ""  // Artista
-            else -> ""   // Ricerca: traccia singola, nessun contesto
-        }
+        // Contesto deciso da chi ha prodotto la lista, non dalla voce di menu:
+        // un album cercato va suonato come album, la cronologia no.
+        val contextUri: String =
+            if (isFavorites) ""          // Preferiti: lista piatta
+            else trackListContextUri
 
         if (isFavorites) favoritesTrackIndex = selectedTrackIndex
         playingFromFavorites = isFavorites
@@ -747,6 +1135,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         screenState = ScreenState.TRACK_DETAILS
         musicRepository?.play(track.uri, contextUri, selectedTrackIndex)
         if (isFavorites) spotifyManager.setShuffle(isLocalShuffleEnabled)
+    }
+
+    fun togglePlayPause() {
+        if (isTrackPlaying) {
+            spotifyManager.pausePlayback(); isTrackPlaying = false
+        } else {
+            spotifyManager.resumePlayback(); isTrackPlaying = true
+        }
     }
 
     /**
@@ -784,14 +1180,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 album = track.album?.name,
                 durationMs = trackDurationMs
             )
-        }
-    }
-
-    fun togglePlayPause() {
-        if (isTrackPlaying) {
-            spotifyManager.pausePlayback(); isTrackPlaying = false
-        } else {
-            spotifyManager.resumePlayback(); isTrackPlaying = true
         }
     }
 
@@ -856,6 +1244,23 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repo.setSpotifyShuffleMode(enabled) }
     }
 
+    /**
+     * Cicla la ripetizione: Off → Tutti → Uno → Off.
+     *
+     * Lo stato viene subito aggiornato in locale (l'icona deve rispondere
+     * all'istante) e poi confermato a Spotify; se Spotify rifiuta, il listener
+     * di player-state riporta il valore reale.
+     */
+    fun toggleRepeat() {
+        val next = when (repeatMode) {
+            Repeat.OFF -> Repeat.ALL
+            Repeat.ALL -> Repeat.ONE
+            else -> Repeat.OFF
+        }
+        repeatMode = next
+        spotifyManager.setRepeatMode(next)
+    }
+
     fun toggleLike(trackId: String) {
         val repo = musicRepository ?: return
         viewModelScope.launch {
@@ -874,8 +1279,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.MAIN_MENU -> if (selectedMainMenuIndex < mainMenuOptions.lastIndex) selectedMainMenuIndex++
             ScreenState.SPOTIFY_MENU -> if (selectedSpotifyMenuIndex < spotifyMenuOptions.lastIndex) selectedSpotifyMenuIndex++
             ScreenState.PLAYLISTS -> if (playlists.isNotEmpty() && selectedPlaylistIndex < playlists.lastIndex) selectedPlaylistIndex++
-            ScreenState.ALBUMS -> if (albums.isNotEmpty() && selectedAlbumIndex < albums.lastIndex) selectedAlbumIndex++
-            ScreenState.ARTISTS -> if (artists.isNotEmpty() && selectedArtistIndex < artists.lastIndex) selectedArtistIndex++
+            ScreenState.ALBUMS -> if (displayAlbums.isNotEmpty() && selectedAlbumIndex < displayAlbums.lastIndex) selectedAlbumIndex++
+            ScreenState.ARTISTS -> if (displayArtists.isNotEmpty() && selectedArtistIndex < displayArtists.lastIndex) selectedArtistIndex++
+            ScreenState.SEARCH_RESULTS -> if (searchResultRows.isNotEmpty() && selectedSearchResultIndex < searchResultRows.lastIndex) selectedSearchResultIndex++
             ScreenState.TRACKS -> if (tracks.isNotEmpty() && selectedTrackIndex < tracks.lastIndex) selectedTrackIndex++
             ScreenState.SETTINGS -> {
                 if (selectedSettingsIndex < settingsRows.lastIndex) {
@@ -896,6 +1302,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.PLAYLISTS -> if (selectedPlaylistIndex > 0) selectedPlaylistIndex--
             ScreenState.ALBUMS -> if (selectedAlbumIndex > 0) selectedAlbumIndex--
             ScreenState.ARTISTS -> if (selectedArtistIndex > 0) selectedArtistIndex--
+            ScreenState.SEARCH_RESULTS -> if (selectedSearchResultIndex > 0) selectedSearchResultIndex--
             ScreenState.TRACKS -> if (selectedTrackIndex > 0) selectedTrackIndex--
             ScreenState.SETTINGS -> {
                 if (selectedSettingsIndex > 0) {
@@ -927,8 +1334,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 1 -> loadAlbumsIfNeeded()
                 2 -> loadArtistsIfNeeded()
                 3 -> { searchQuery = ""; screenState = ScreenState.SEARCH }
+                4 -> loadChronology()
+                5 -> loadQueue()
             }
             ScreenState.SEARCH -> handleSearchInput()
+            ScreenState.SEARCH_RESULTS ->
+                searchResultRows.getOrNull(selectedSearchResultIndex)
+                    ?.first
+                    ?.let { openSearchResult(it) }
             ScreenState.ALBUMS -> loadTracksForAlbum()
             ScreenState.ARTISTS -> loadTracksForArtist()
             ScreenState.PLAYLISTS -> loadTracksForPlaylist()
@@ -950,6 +1363,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     feedback.soundLevel = feedback.soundLevel.next
                     feedback.click()
                 }
+
+                SettingsRowKind.BACKLIGHT -> cycleBacklight()
+
+                // Schermata statica: niente azione oltre a navigarci dentro
+                SettingsRowKind.ABOUT -> screenState = ScreenState.ABOUT
 
                 // "Disconnetti Spotify": prima pressione chiede conferma, seconda agisce
                 SettingsRowKind.LOGOUT -> if (!confirmLogout) confirmLogout = true else disconnectSpotify()
@@ -978,14 +1396,34 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 showLyrics = false
                 screenState = ScreenState.TRACKS
             }
-            ScreenState.TRACKS -> screenState = when (selectedSpotifyMenuIndex) {
-                1 -> ScreenState.ALBUMS
-                2 -> ScreenState.ARTISTS
-                3 -> ScreenState.SEARCH
-                else -> ScreenState.PLAYLISTS
+            ScreenState.TRACKS -> {
+                // Uscire dai brani azzera anche un'eventuale "aggiungi a playlist"
+                cancelAddToPlaylist()
+                screenState = when (selectedSpotifyMenuIndex) {
+                    1 -> ScreenState.ALBUMS
+                    2 -> ScreenState.ARTISTS
+                    // Con una ricerca aperta si torna ai risultati, non alla tastiera
+                    3 -> if (searchResults != null) ScreenState.SEARCH_RESULTS
+                        else ScreenState.SEARCH
+                    // Cronologia e Coda non hanno un livello sotto: si torna al menu
+                    4, 5 -> ScreenState.SPOTIFY_MENU
+                    else -> ScreenState.PLAYLISTS
+                }
             }
-            ScreenState.PLAYLISTS, ScreenState.ALBUMS, ScreenState.ARTISTS, ScreenState.SEARCH ->
+            ScreenState.SEARCH_RESULTS -> screenState = ScreenState.SEARCH
+            // Dalla ricerca si torna ai risultati, dal menu Spotify al menu Spotify
+            ScreenState.ALBUMS, ScreenState.ARTISTS ->
+                screenState = if (searchListsActive) ScreenState.SEARCH_RESULTS
+                    else ScreenState.SPOTIFY_MENU
+            ScreenState.PLAYLISTS -> if (addingToPlaylist) {
+                // Modalità "aggiungi": si torna ai brani, l'operazione decade
+                cancelAddToPlaylist()
+                screenState = ScreenState.TRACKS
+            } else {
                 screenState = ScreenState.SPOTIFY_MENU
+            }
+            ScreenState.SEARCH -> screenState = ScreenState.SPOTIFY_MENU
+            ScreenState.ABOUT -> screenState = ScreenState.SETTINGS
             ScreenState.SPOTIFY_MENU, ScreenState.SETTINGS -> {
                 confirmLogout = false
                 screenState = ScreenState.MAIN_MENU
@@ -996,6 +1434,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onMenuLongClick() {
         if (screenState != ScreenState.MAIN_MENU && screenState != ScreenState.CREDENTIALS_SETUP) {
+            // Salire al menu principale interrompe qualsiasi "aggiungi a playlist"
+            cancelAddToPlaylist()
             previousScreen = screenState
             screenState = ScreenState.MAIN_MENU
             selectedMainMenuIndex = 0

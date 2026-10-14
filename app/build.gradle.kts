@@ -93,7 +93,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
 
     // Audio & Retrofit Network Pipeline
-    implementation("androidx.media3:media3-exoplayer:1.3.0")
+    // NB: media3-exoplayer è stato rimosso — l'audio lo gestisce l'app Spotify
+    // via App Remote, qui non c'è nessun player che lo usi.
     implementation(files("libs/spotify-app-remote-release-0.8.0.aar"))
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("com.squareup.retrofit2:retrofit:2.9.0")

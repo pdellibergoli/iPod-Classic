@@ -2,12 +2,14 @@ package com.train.ipodclassicemulator.data.repository
 
 import android.util.Log
 import com.train.ipodclassicemulator.data.model.PlaylistItem
+import com.train.ipodclassicemulator.data.model.SearchResults
 import com.train.ipodclassicemulator.data.model.SpotifyAlbumDetails
 import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
 import com.train.ipodclassicemulator.data.model.SpotifyImage
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
 import com.train.ipodclassicemulator.data.model.SpotifyTokenResponse
+import com.train.ipodclassicemulator.data.remote.AddTracksBody
 import com.train.ipodclassicemulator.data.remote.SpotifyApiService
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
 import kotlinx.coroutines.sync.Mutex
@@ -199,9 +201,11 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
                 result.addAll(page.items.mapNotNull { it.track })
                 offset += limit
             } while (page.next != null)
-            result
+            // Una playlist può ospitare episodi: stessa forma JSON, ma senza
+            // `artists` → la lista brani darebbe NPE alla prima riga
+            result.filter { it.uri.startsWith("spotify:track:") }
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore brani playlist", e); handleAuthFailure(e); result
+            Log.e(TAG, "Errore brani playlist", e); handleAuthFailure(e); result
         }
     }
 
@@ -219,7 +223,8 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
                 result.addAll(page.items.map { it.track })
                 offset += limit
             } while (page.next != null)
-            result
+            // La libreria può contenere episodi: senza `artists` darebbero NPE
+            result.filter { it.uri.startsWith("spotify:track:") }
         } catch (e: Exception) {
             Log.e("MusicRepository", "Errore liked songs", e); handleAuthFailure(e); result
         }
@@ -324,13 +329,107 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
 
     // ── RICERCA ───────────────────────────────────────────────────────────────
 
-    suspend fun searchSpotifyTracks(query: String): List<SpotifyTrackDetails> {
-        val token = authHeader() ?: return emptyList()
-        if (query.isBlank()) return emptyList()
+    /**
+     * Cerca brani, artisti e album con un'unica chiamata (il tipo è
+     * "track,artist,album", quindi Spotify restituisce tre sezioni).
+     *
+     * @return le tre liste; in errore sono tutte vuote, mai una eccezione.
+     */
+    suspend fun searchSpotify(query: String): SearchResults {
+        val empty = SearchResults(emptyList(), emptyList(), emptyList())
+        val token = authHeader() ?: return empty
+        if (query.isBlank()) return empty
         return try {
-            apiService.searchTracks("Bearer $token", query).tracks.items
+            val response = apiService.search("Bearer $token", query)
+            SearchResults(
+                tracks = response.tracks?.items.orEmpty(),
+                artists = response.artists?.items.orEmpty(),
+                albums = response.albums?.items.orEmpty()
+            )
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore ricerca", e); handleAuthFailure(e); emptyList()
+            Log.e(TAG, "Errore ricerca", e); handleAuthFailure(e); empty
+        }
+    }
+
+    // ── CRONOLOGIA ───────────────────────────────────────────────────────────
+
+    /**
+     * Ultime tracce riprodotte dall'utente.
+     *
+     * Gli episodi (podcast) hanno la stessa forma JSON ma non hanno `artists`:
+     * verranno deserializzati con i campi mancanti a null, quindi vengono
+     * scartati prima di poterli toccare.
+     *
+     * @return le tracce; `null` se lo scope non è concesso (serve un nuovo
+     *   accesso), lista vuota in caso di errore di rete o lista davvero vuota.
+     */
+    suspend fun getRecentlyPlayed(): List<SpotifyTrackDetails>? {
+        val token = authHeader() ?: return emptyList()
+        return try {
+            apiService.getRecentlyPlayed("Bearer $token")
+                .items
+                .mapNotNull { it.track }
+                .filter { it.uri.startsWith("spotify:track:") }
+        } catch (e: HttpException) {
+            Log.e(TAG, "Errore cronologia: HTTP ${e.code()}", e); handleAuthFailure(e)
+            // 403 = lo scope "user-read-recently-played" non è nel token attuale:
+            // non è che la lista sia vuota, è che serve un nuovo accesso
+            if (e.code() == 403) null else emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Errore cronologia", e); handleAuthFailure(e); emptyList()
+        }
+    }
+
+    // ── CODA ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Prossimi brani in coda di riproduzione (il brano in corso è
+     * `currently_playing` e non fa parte della coda).
+     *
+     * @return come [getRecentlyPlayed].
+     */
+    suspend fun getPlaybackQueue(): List<SpotifyTrackDetails>? {
+        val token = authHeader() ?: return emptyList()
+        return try {
+            apiService.getPlayerQueue("Bearer $token")
+                .queue
+                .orEmpty()
+                .filterNotNull()
+                .filter { it.uri.startsWith("spotify:track:") }
+        } catch (e: HttpException) {
+            Log.e(TAG, "Errore coda: HTTP ${e.code()}", e); handleAuthFailure(e)
+            // 403 = manca "user-read-playback-state"
+            if (e.code() == 403) null else emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Errore coda", e); handleAuthFailure(e); emptyList()
+        }
+    }
+
+    // ── PLAYLIST: aggiunta di un brano ───────────────────────────────────────
+
+    /**
+     * @return `true` se il brano è stato aggiunto, `false` se Spotify ha
+     *   rifiutato la richiesta, `null` se manca lo scope `playlist-modify-*`
+     *   (403) e serve un nuovo accesso.
+     */
+    suspend fun addTrackToPlaylist(playlistId: String, trackUri: String): Boolean? {
+        val token = authHeader() ?: return false
+        return try {
+            val response = apiService.addTracksToPlaylist(
+                bearer = "Bearer $token",
+                playlistId = playlistId,
+                body = AddTracksBody(uris = listOf(trackUri))
+            )
+            when {
+                response.isSuccessful -> true
+                response.code() == 403 -> null
+                else -> {
+                    Log.w(TAG, "Aggiunta rifiutata: HTTP ${response.code()}")
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Errore aggiunta a playlist", e); handleAuthFailure(e); false
         }
     }
 

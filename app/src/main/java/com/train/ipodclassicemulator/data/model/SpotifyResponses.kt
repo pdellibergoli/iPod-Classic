@@ -142,10 +142,40 @@ data class SpotifySimplifiedTrack(
     val artists: List<com.train.ipodclassicemulator.data.model.SpotifyArtistInfo>
 )
 
-data class SpotifySearchResponse(
-    val tracks: SpotifySearchTracksContainer
+/**
+ * Risultati di una ricerca: le tre sezioni che mostriamo nel menu.
+ * Ogni lista può essere vuota (Spotify restituisce solo i tipi richiesti
+ * e non trova sempre tutto).
+ */
+data class SearchResults(
+    val tracks: List<SpotifyTrackDetails>,
+    val artists: List<SpotifyArtistDetails>,
+    val albums: List<SpotifyAlbumDetails>
 )
 
-data class SpotifySearchTracksContainer(
-    val items: List<com.train.ipodclassicemulator.data.model.SpotifyTrackDetails>
+data class SpotifySearchResponse(
+    val tracks: SpotifySearchTracksContainer? = null,
+    val artists: SpotifySearchArtistsContainer? = null,
+    val albums: SpotifySearchAlbumsContainer? = null
+)
+
+data class SpotifySearchTracksContainer(val items: List<SpotifyTrackDetails>)
+data class SpotifySearchArtistsContainer(val items: List<SpotifyArtistDetails>)
+data class SpotifySearchAlbumsContainer(val items: List<SpotifyAlbumDetails>)
+
+// ── CRONOLOGIA — GET me/player/recently-played ────────────────────────────────
+
+data class SpotifyRecentlyPlayedResponse(val items: List<RecentlyPlayedItem>)
+
+data class RecentlyPlayedItem(val track: SpotifyTrackDetails?)
+
+// ── CODA — GET me/player/queue ────────────────────────────────────────────────
+
+/**
+ * `currently_playing` e `queue` possono contenere anche episodi (podcast):
+ * vengono filtrati a valle, perché [SpotifyTrackDetails] regge solo le tracce.
+ */
+data class SpotifyQueueResponse(
+    val currently_playing: SpotifyTrackDetails? = null,
+    val queue: List<SpotifyTrackDetails?>? = null
 )

@@ -1,7 +1,10 @@
 package com.train.ipodclassicemulator
 
 import android.content.IntentFilter
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -15,11 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.train.ipodclassicemulator.ui.components.AboutScreen
 import com.train.ipodclassicemulator.ui.components.AlbumCoverKenBurns
 import com.train.ipodclassicemulator.ui.components.ClickWheel
 import com.train.ipodclassicemulator.ui.components.CoverFlow
@@ -67,6 +72,7 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
     val artistListState = rememberLazyListState()
     val trackListState = rememberLazyListState()
     val settingsListState = rememberLazyListState()
+    val searchResultsListState = rememberLazyListState()
 
     LaunchedEffect(viewModel.selectedMainMenuIndex, viewModel.screenState) {
         if (viewModel.screenState == ScreenState.MAIN_MENU)
@@ -92,6 +98,10 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
     LaunchedEffect(viewModel.selectedSettingsIndex, viewModel.screenState) {
         if (viewModel.screenState == ScreenState.SETTINGS)
             settingsListState.scrollToKeepSelectedVisible(viewModel.selectedSettingsIndex)
+    }
+    LaunchedEffect(viewModel.selectedSearchResultIndex, viewModel.screenState) {
+        if (viewModel.screenState == ScreenState.SEARCH_RESULTS)
+            searchResultsListState.scrollToKeepSelectedVisible(viewModel.selectedSearchResultIndex)
     }
 
     // ── Root UI ───────────────────────────────────────────────────────────────
@@ -154,8 +164,29 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                             artistListState = artistListState,
                             trackListState = trackListState,
                             settingsListState = settingsListState,
+                            searchResultsListState = searchResultsListState,
                         )
                     }
+                }
+
+                // Retroilluminazione: la LCD si attenua dopo N secondi di inattività
+                // e torna piena al primo tocco. Copre l'intero pannello compreso il
+                // padding, come sul vero iPod dove si spegne tutta la lampada.
+                val dimAlpha by animateFloatAsState(
+                    targetValue = if (viewModel.isScreenDimmed) 0.78f else 0f,
+                    animationSpec = tween(durationMillis = 600),
+                    label = "backlight_dim"
+                )
+                if (dimAlpha > 0.001f) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = dimAlpha))
+                            // Il pannello spento è inerte: il tocco serve solo a riaccenderlo
+                            .pointerInput(Unit) {
+                                detectTapGestures { viewModel.noteInteraction() }
+                            }
+                    )
                 }
             }
 
@@ -166,14 +197,16 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                 onScrollNext = { viewModel.onScrollNext() },
                 onScrollPrevious = { viewModel.onScrollPrevious() },
                 onSelectClick = { viewModel.onSelectClick(themeManager) },
+                onSelectLongClick = { viewModel.onSelectLongClick() },
                 onMenuClick = { viewModel.onMenuClick() },
                 onMenuLongClick = { viewModel.onMenuLongClick() },
                 onPlayPauseClick = { viewModel.togglePlayPause() },
                 onNextClick = { viewModel.skipNext() },
                 onPreviousClick = { viewModel.skipPrevious() },
-                // Vibrazione + click sonoro, con intensità scelta nelle Impostazioni
-                onTick = { viewModel.feedback.click() },
-                onPress = { viewModel.feedback.press() }
+                // Vibrazione + click sonoro, con intensità scelta nelle Impostazioni.
+                // Ogni tick e ogni pressione tengono anche sveglia la retroilluminazione.
+                onTick = { viewModel.noteInteraction(); viewModel.feedback.click() },
+                onPress = { viewModel.noteInteraction(); viewModel.feedback.press() }
             )
         }
     }
@@ -228,6 +261,7 @@ private fun IPodScreenContent(
     artistListState: androidx.compose.foundation.lazy.LazyListState,
     trackListState: androidx.compose.foundation.lazy.LazyListState,
     settingsListState: androidx.compose.foundation.lazy.LazyListState,
+    searchResultsListState: androidx.compose.foundation.lazy.LazyListState,
 ) {
     val vm = viewModel
     when (vm.screenState) {
@@ -256,7 +290,12 @@ private fun IPodScreenContent(
 
         ScreenState.PLAYLISTS -> {
             Column(modifier = Modifier.fillMaxSize()) {
-                IPodStatusBar("Playlist", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                IPodStatusBar(
+                    if (vm.addingToPlaylist) "Aggiungi a…" else "Playlist",
+                    vm.batteryPercentage,
+                    vm.isBatteryCharging,
+                    vm.isTrackPlaying
+                )
                 Spacer(Modifier.height(2.dp))
                 LazyColumn(state = playlistListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                     itemsIndexed(vm.playlists) { index, playlist ->
@@ -279,7 +318,7 @@ private fun IPodScreenContent(
             Column(modifier = Modifier.fillMaxSize()) {
                 IPodStatusBar("Album", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
                 CoverFlow(
-                    albums = vm.albums,
+                    albums = vm.displayAlbums,
                     selectedIndex = vm.selectedAlbumIndex,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -293,10 +332,11 @@ private fun IPodScreenContent(
                 IPodStatusBar("Artisti", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
                 Spacer(Modifier.height(2.dp))
                 LazyColumn(state = artistListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    itemsIndexed(vm.artists) { index, artist ->
+                    itemsIndexed(vm.displayArtists) { index, artist ->
                         MediaListItem(
                             title = artist.name,
-                            subtitle = "Artista aggiunto",
+                            subtitle = if (vm.viewingSearchResults) "Risultato di ricerca"
+                                       else "Artista aggiunto",
                             imageUrl = artist.images?.firstOrNull()?.url,
                             isSelected = index == vm.selectedArtistIndex,
                             isCircleImage = true
@@ -308,7 +348,12 @@ private fun IPodScreenContent(
 
         ScreenState.TRACKS -> {
             Column(modifier = Modifier.fillMaxSize()) {
-                IPodStatusBar("Brani", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                IPodStatusBar(
+                    vm.listNotice ?: vm.trackListTitle,
+                    vm.batteryPercentage,
+                    vm.isBatteryCharging,
+                    vm.isTrackPlaying
+                )
                 Spacer(Modifier.height(2.dp))
                 LazyColumn(state = trackListState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                     itemsIndexed(vm.tracks) { index, track ->
@@ -320,10 +365,52 @@ private fun IPodScreenContent(
                         )
                     }
                 }
+                // Scopribilità dell'azione di contesto: sulla lista brani non
+                // c'è altro posto dove annunciarla senza rubare righe all'elenco
+                Text(
+                    text = "Centro: riproduci · Lungo: aggiungi a playlist",
+                    fontSize = 9.sp,
+                    color = IPodTheme.colors.screenText.copy(alpha = 0.45f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    textAlign = TextAlign.Center
+                )
             }
         }
 
         ScreenState.SEARCH -> SearchScreen(viewModel = vm)
+
+        // MENU dalla schermata dei risultati torna qui: è il livello che tiene
+        // insieme le tre sezioni, come una cartella con sotto-cartelle
+        ScreenState.SEARCH_RESULTS -> {
+            val rows = vm.searchResultRows
+            if (rows.isEmpty()) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    IPodStatusBar("Risultati", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                    Spacer(Modifier.height(2.dp))
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Nessun risultato per\n\"${vm.searchQuery}\"",
+                            fontSize = 13.sp,
+                            color = IPodTheme.colors.screenText.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+                }
+            } else {
+                IPodMenuScreen(
+                    title = "Risultati",
+                    items = rows.map { it.second },
+                    selectedIndex = vm.selectedSearchResultIndex,
+                    listState = searchResultsListState,
+                    batteryPercent = vm.batteryPercentage,
+                    isCharging = vm.isBatteryCharging,
+                    isMusicPlaying = vm.isTrackPlaying
+                )
+            }
+        }
 
         ScreenState.TRACK_DETAILS -> vm.playingTrackDetails?.let { track ->
             Column(modifier = Modifier.fillMaxSize()) {
@@ -346,10 +433,12 @@ private fun IPodScreenContent(
                             durationMs = vm.trackDurationMs,
                             isLiked = vm.isCurrentTrackLiked,
                             playbackMode = vm.currentPlaybackMode,
+                            repeatMode = vm.repeatMode,
                             volumePercent = vm.currentVolumePercent,
                             showVolumeBar = vm.showVolumeBar,
                             onLikeToggle = { vm.toggleLike(track.id) },
-                            onModeToggle = { vm.toggleShuffle() }
+                            onModeToggle = { vm.toggleShuffle() },
+                            onRepeatToggle = { vm.toggleRepeat() }
                         )
                     }
                 }
@@ -367,6 +456,16 @@ private fun IPodScreenContent(
                         rows = vm.settingsRows,
                         confirmLogout = vm.confirmLogout
                     )
+                }
+            }
+        }
+
+        ScreenState.ABOUT -> {
+            Column(modifier = Modifier.fillMaxSize()) {
+                IPodStatusBar("Informazioni", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
+                Spacer(Modifier.height(2.dp))
+                Box(modifier = Modifier.weight(1f)) {
+                    AboutScreen(appVersion = vm.appVersion)
                 }
             }
         }

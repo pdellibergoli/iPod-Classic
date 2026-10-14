@@ -32,6 +32,8 @@ fun ClickWheel(
     onScrollNext: () -> Unit,
     onScrollPrevious: () -> Unit,
     onSelectClick: () -> Unit,
+    /** Pressione lunga sul tasto centrale (azione di contesto). */
+    onSelectLongClick: () -> Unit = {},
     onMenuClick: () -> Unit = {},
     onMenuLongClick: () -> Unit = {},
     onPlayPauseClick: () -> Unit = {},
@@ -190,9 +192,17 @@ fun ClickWheel(
                             // Il feedback scatta alla pressione, non al rilascio:
                             // è quello che dà la sensazione di tasto meccanico.
                             onPress()
-                            tryAwaitRelease()
-                            isCenterPressed = false
+                            try {
+                                tryAwaitRelease()
+                            } finally {
+                                // Con la premessa lunga la coroutine può essere
+                                // annullata: senza `finally` il tasto resterebbe
+                                // premuto per sempre.
+                                isCenterPressed = false
+                            }
                         },
+                        // Premessa lunga: azione di contesto ("aggiungi a playlist")
+                        onLongPress = { onSelectLongClick() },
                         onTap = { onSelectClick() }
                     )
                 }

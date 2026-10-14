@@ -118,7 +118,13 @@ class SpotifyManager(private val context: Context) {
 
         val challenge = generateCodeChallenge(verifier)
 
-        val scopes = "playlist-read-private playlist-read-collaborative user-library-read user-library-modify user-follow-read user-modify-playback-state"
+        // `playlist-modify-*` servono per "aggiungi a playlist", `user-read-recently-played`
+        // per la Cronologia e `user-read-playback-state` per la Coda.
+        val scopes = "playlist-read-private playlist-read-collaborative " +
+                "playlist-modify-private playlist-modify-public " +
+                "user-library-read user-library-modify user-follow-read " +
+                "user-modify-playback-state user-read-playback-state " +
+                "user-read-recently-played"
 
         val authUrl = "https://accounts.spotify.com/authorize" +
                 "?client_id=$spotifyClientId" +
@@ -258,13 +264,15 @@ class SpotifyManager(private val context: Context) {
             ?.setErrorCallback { Log.e("SpotifyManager", "Errore impostazione Shuffle", it) }
     }
 
-    fun setRepeatMode(mode: Int) {
-        val spotifyRepeatMode = when(mode) {
-            1 -> com.spotify.protocol.types.Repeat.ALL
-            2 -> com.spotify.protocol.types.Repeat.ONE
-            else -> com.spotify.protocol.types.Repeat.OFF
-        }
-        spotifyAppRemote?.playerApi?.setRepeat(spotifyRepeatMode)
+    /**
+     * Imposta la modalità di ripetizione.
+     *
+     * @param repeat uno dei valori di [com.spotify.protocol.types.Repeat]:
+     *   `OFF`, `ONE`, `ALL`. Il valore va passato **così com'è**: l'API di
+     *   Spotify usa 0=OFF, 1=ONE, 2=ALL, quindi nessuna conversione.
+     */
+    fun setRepeatMode(repeat: Int) {
+        spotifyAppRemote?.playerApi?.setRepeat(repeat)
             ?.setErrorCallback { Log.e("SpotifyManager", "Errore impostazione Repeat", it) }
     }
 
