@@ -25,6 +25,7 @@ import com.train.ipodclassicemulator.ui.components.ClickWheel
 import com.train.ipodclassicemulator.ui.components.CoverFlow
 import com.train.ipodclassicemulator.ui.components.IPodMenuRow
 import com.train.ipodclassicemulator.ui.components.IPodStatusBar
+import com.train.ipodclassicemulator.ui.components.LyricsScreen
 import com.train.ipodclassicemulator.ui.components.MediaListItem
 import com.train.ipodclassicemulator.ui.components.PlayerScreen
 import com.train.ipodclassicemulator.ui.components.SettingsScreen
@@ -328,18 +329,29 @@ private fun IPodScreenContent(
             Column(modifier = Modifier.fillMaxSize()) {
                 IPodStatusBar("Now Playing", vm.batteryPercentage, vm.isBatteryCharging, vm.isTrackPlaying)
                 Box(modifier = Modifier.weight(1f)) {
-                    PlayerScreen(
-                        track = track,
-                        coverUrl = vm.currentCoverUrl,
-                        progressMs = vm.currentProgressMs,
-                        durationMs = vm.trackDurationMs,
-                        isLiked = vm.isCurrentTrackLiked,
-                        playbackMode = vm.currentPlaybackMode,
-                        volumePercent = vm.currentVolumePercent,
-                        showVolumeBar = vm.showVolumeBar,
-                        onLikeToggle = { vm.toggleLike(track.id) },
-                        onModeToggle = { vm.toggleShuffle() }
-                    )
+                    // Il tasto centrale alterna info di riproduzione e lyrics
+                    if (vm.showLyrics) {
+                        LyricsScreen(
+                            track = track,
+                            result = vm.lyrics,
+                            progressMs = vm.currentProgressMs,
+                            volumePercent = vm.currentVolumePercent,
+                            showVolumeBar = vm.showVolumeBar
+                        )
+                    } else {
+                        PlayerScreen(
+                            track = track,
+                            coverUrl = vm.currentCoverUrl,
+                            progressMs = vm.currentProgressMs,
+                            durationMs = vm.trackDurationMs,
+                            isLiked = vm.isCurrentTrackLiked,
+                            playbackMode = vm.currentPlaybackMode,
+                            volumePercent = vm.currentVolumePercent,
+                            showVolumeBar = vm.showVolumeBar,
+                            onLikeToggle = { vm.toggleLike(track.id) },
+                            onModeToggle = { vm.toggleShuffle() }
+                        )
+                    }
                 }
             }
         }

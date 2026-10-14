@@ -270,7 +270,8 @@ private fun ProgressBar(
 
 // ── Volume Bar (sostituisce il progress quando si cambia volume) ──────────────
 @Composable
-private fun VolumeBar(
+// `internal` perché la riusa anche LyricsScreen sotto forma di overlay.
+internal fun VolumeBar(
     volumePercent: Float
 ) {
     Row(

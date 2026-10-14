@@ -19,6 +19,8 @@ import com.train.ipodclassicemulator.data.model.SpotifyAlbumModelInfo
 import com.train.ipodclassicemulator.data.model.SpotifyArtistDetails
 import com.train.ipodclassicemulator.data.model.SpotifyArtistInfo
 import com.train.ipodclassicemulator.data.model.SpotifyTrackDetails
+import com.train.ipodclassicemulator.data.remote.LyricsRepository
+import com.train.ipodclassicemulator.data.remote.LyricsResult
 import com.train.ipodclassicemulator.data.remote.SpotifyManager
 import com.train.ipodclassicemulator.data.repository.MusicRepository
 import com.train.ipodclassicemulator.feedback.FeedbackManager
@@ -203,6 +205,26 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     // Fix #11 — job per isTrackSaved: cancellato se arriva una nuova traccia prima del completamento
     private var isTrackSavedJob: Job? = null
 
+    // ── Lyrics ────────────────────────────────────────────────────────────────
+
+    private val lyricsRepository = LyricsRepository()
+
+    /** true quando al posto delle info di riproduzione vanno mostrate le lyrics. */
+    var showLyrics by mutableStateOf(false)
+
+    /**
+     * Lyrics della traccia corrente. `null` = ancora in caricamento.
+     *
+     * È una sola variabile perché [LyricsResult] già descrive tutti gli esiti
+     * (sincronizzate / solo testo / non trovate).
+     */
+    var lyrics by mutableStateOf<LyricsResult?>(null)
+        private set
+
+    /** id della traccia a cui si riferiscono le lyrics attualmente in memoria. */
+    private var lyricsTrackId: String? = null
+    private var lyricsJob: Job? = null
+
     // ── Search ────────────────────────────────────────────────────────────────
     val keyboardChars = listOf(
         "_", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
@@ -351,6 +373,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         spotifyManager.clearAllTokens()
 
         playlists = emptyList()
+        showLyrics = false
+        lyrics = null
+        lyricsTrackId = null
+        lyricsJob?.cancel()
         playlistsLoaded = false
         albums = emptyList()
         artists = emptyList()
@@ -419,6 +445,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
                 )
 
+                // Se l'utente sta guardando le lyrics, seguono il nuovo brano
+                if (showLyrics) loadLyrics()
+
                 // Fix #11 — cancella la chiamata precedente prima di lanciarne una nuova
                 isTrackSavedJob?.cancel()
                 isTrackSavedJob = viewModelScope.launch {
@@ -451,6 +480,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
             )
             Log.d(TAG, "Now Playing ripristinato all'avvio: ${track.name}")
+            if (showLyrics) loadLyrics()
         }
     }
 
@@ -713,9 +743,48 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         playingFromFavorites = isFavorites
         currentProgressMs = 0L
         playingTrackDetails = track
+        showLyrics = false
         screenState = ScreenState.TRACK_DETAILS
         musicRepository?.play(track.uri, contextUri, selectedTrackIndex)
         if (isFavorites) spotifyManager.setShuffle(isLocalShuffleEnabled)
+    }
+
+    /**
+     * Tasto centrale mentre si è nel player: alterna le lyrics alle info di
+     * riproduzione.
+     */
+    fun toggleLyrics() {
+        if (screenState != ScreenState.TRACK_DETAILS) return
+        showLyrics = !showLyrics
+        if (showLyrics) loadLyrics()
+    }
+
+    /**
+     * Scarica le lyrics della traccia corrente se non le abbiamo già.
+     *
+     * Idempotente e a costo costante: il confronto su `lyricsTrackId` evita di
+     * rifare la richiesta a ogni toggle, e cachiamo anche i "non trovati".
+     */
+    private fun loadLyrics() {
+        val track = playingTrackDetails
+        if (track == null) {
+            lyrics = LyricsResult.None
+            return
+        }
+        // Già cercate (o ricerca ancora in corso): non si ripete la richiesta
+        if (track.id == lyricsTrackId && (lyrics != null || lyricsJob?.isActive == true)) return
+
+        lyricsTrackId = track.id
+        lyrics = null
+        lyricsJob?.cancel()
+        lyricsJob = viewModelScope.launch {
+            lyrics = lyricsRepository.getLyrics(
+                title = track.name,
+                artist = track.artists.firstOrNull()?.name ?: "",
+                album = track.album?.name,
+                durationMs = trackDurationMs
+            )
+        }
     }
 
     fun togglePlayPause() {
@@ -758,6 +827,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     private fun playFavoritesTrack(track: SpotifyTrackDetails) {
         currentProgressMs = 0L
         playingTrackDetails = track
+        if (showLyrics) loadLyrics()
         musicRepository?.play(track.uri, "")
         if (!isLocalShuffleEnabled) spotifyManager.setShuffle(false)
     }
@@ -770,6 +840,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         if (tracksFromFavorites) favoritesTrackIndex = i
         playingTrackDetails = tracks[i]
         currentProgressMs = 0L
+        showLyrics = false
         screenState = ScreenState.TRACK_DETAILS
         musicRepository?.play(tracks[i].uri, "")
     }
@@ -846,7 +917,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 0 -> screenState = ScreenState.SPOTIFY_MENU
                 1 -> { confirmLogout = false; screenState = ScreenState.SETTINGS }
                 2 -> shuffleAll()
-                3 -> if (playingTrackDetails != null) screenState = ScreenState.TRACK_DETAILS
+                3 -> if (playingTrackDetails != null) {
+                    showLyrics = false
+                    screenState = ScreenState.TRACK_DETAILS
+                }
             }
             ScreenState.SPOTIFY_MENU -> when (selectedSpotifyMenuIndex) {
                 0 -> loadPlaylistsIfNeeded()
@@ -859,6 +933,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             ScreenState.ARTISTS -> loadTracksForArtist()
             ScreenState.PLAYLISTS -> loadTracksForPlaylist()
             ScreenState.TRACKS -> playSelectedTrack()
+            // Nel player il tasto centrale passa dalle info alle lyrics e ritorno
+            ScreenState.TRACK_DETAILS -> toggleLyrics()
             ScreenState.SETTINGS -> when (settingsRows.getOrNull(selectedSettingsIndex)?.kind) {
                 SettingsRowKind.THEME ->
                     settingsRows[selectedSettingsIndex].theme?.let { themeManager.setTheme(it) }
@@ -897,7 +973,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onMenuClick() {
         when (screenState) {
-            ScreenState.TRACK_DETAILS -> screenState = ScreenState.TRACKS
+            ScreenState.TRACK_DETAILS -> {
+                // Si esce dalle lyrics: alla rientrata si ripartono le info
+                showLyrics = false
+                screenState = ScreenState.TRACKS
+            }
             ScreenState.TRACKS -> screenState = when (selectedSpotifyMenuIndex) {
                 1 -> ScreenState.ALBUMS
                 2 -> ScreenState.ARTISTS
