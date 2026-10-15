@@ -462,7 +462,12 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
                 playerApi.play(trackUri)
             }
         } else {
-            playerApi.play(trackUri)
+            // Senza contesto il comando va applicato così com'è: se fallisce
+            // non deve restare silenzioso, altrimenti la riproduzione prosegue
+            // con l'autoplay di Spotify e non si capisce perché.
+            playerApi.play(trackUri).setErrorCallback { e ->
+                Log.e("MusicRepository", "play della traccia singola fallito: $trackUri", e)
+            }
         }
     }
 

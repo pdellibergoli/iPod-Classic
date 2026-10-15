@@ -45,6 +45,8 @@ private const val END_OF_TRACK_MS = 1_500L   // finestra di "fine brano"
 private const val MIN_ADVANCE_MS = 3_000L    // anti doppio avanzamento dei Preferiti
 private const val SEEK_STEP_MS = 5_000L      // passo del salto rapido (5 s)
 private const val SEEK_GRACE_MS = 1_500L     // niente riallineo subito dopo un salto
+private const val AUTO_RECOVER_MS = 20_000L  // "era quasi finito" per l'autoplay
+private const val RECOVER_COOLDOWN_MS = 5_000L // anti loop di ripristino
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, SEARCH_RESULTS, TRACKS, TRACK_DETAILS, SETTINGS, ABOUT
@@ -204,6 +206,12 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Ultimo salto rapido: per un attimo la barra non viene riallineata. */
     private var lastSeekAt = 0L
+
+    /** Ultimo ripristino dell'autoplay a fine brano (anti loop). */
+    private var lastRecoverAt = 0L
+
+    /** Ultimo avanzamento automatico dei Preferiti (anti doppio avanzamento). */
+    private var lastAdvanceAt = 0L
 
     /**
      * Registra un'attività dell'utente: riaccende la LCD e riavvia il conto alla
@@ -630,6 +638,25 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         spotifyManager.onPlayerStateChanged = { playerState: PlayerState ->
             val track: Track? = playerState.track
             if (track != null) {
+                val cleanedId = track.uri.substringAfter("track:")
+
+                // Rete di sicurezza per i Preferiti: l'avanzamento a fine brano
+                // dipende dal nostro orologio, che sotto schermo spento o app in
+                // sottofondo può non arrivare in tempo. Se mentre suonava un
+                // Preferito Spotify passa da solo a una traccia che nei Preferiti
+                // non c'è, quello è l'autoplay di fine brano e va corretto.
+                // I valori vengono presi PRIMA di sovrascriverli: sono del
+                // brano che stava finendo.
+                val previousId = playingTrackDetails?.id
+                val now = SystemClock.elapsedRealtime()
+                val autoAdvanced = playingFromFavorites &&
+                    now - lastRecoverAt >= RECOVER_COOLDOWN_MS &&
+                    previousId != null && previousId != cleanedId &&
+                    favoritesTracks.any { it.id == previousId } &&
+                    !favoritesTracks.any { it.id == cleanedId } &&
+                    trackDurationMs > 0L &&
+                    currentProgressMs >= trackDurationMs - AUTO_RECOVER_MS
+
                 trackDurationMs = track.duration
                 currentProgressMs = playerState.playbackPosition
                 isTrackPlaying = !playerState.isPaused
@@ -655,7 +682,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     currentCoverUrl = finalUrl
                 }
 
-                val cleanedId = track.uri.substringAfter("track:")
                 playingTrackDetails = SpotifyTrackDetails(
                     id = cleanedId,
                     name = track.name,
@@ -664,13 +690,30 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
                 )
 
+                // Se quei Preferiti sono in riproduzione, l'indice segue il brano
+                // che suona DAVVERO: un cambio fatto dall'app ufficiale non deve
+                // mandare "successivo" e "precedente" fuori lista.
+                if (playingFromFavorites) {
+                    val idx = favoritesTracks.indexOfFirst { it.id == cleanedId }
+                    if (idx >= 0) favoritesTrackIndex = idx
+                }
+
+                // Spotify può essere andato avanti da solo con l'autoplay: si
+                // torna subito sui Preferiti, prima di aggiornare lyrics e
+                // copertina sulla traccia sbagliata.
+                if (autoAdvanced) {
+                    lastRecoverAt = now
+                    recoverFavoritesAutoAdvance(previousId)
+                }
+
                 // Se l'utente sta guardando le lyrics, seguono il nuovo brano
                 if (showLyrics) loadLyrics()
 
                 // Fix #11 — cancella la chiamata precedente prima di lanciarne una nuova
                 isTrackSavedJob?.cancel()
                 isTrackSavedJob = viewModelScope.launch {
-                    isCurrentTrackLiked = musicRepository?.isTrackSaved(cleanedId) ?: false
+                    val likedId = playingTrackDetails?.id ?: cleanedId
+                    isCurrentTrackLiked = musicRepository?.isTrackSaved(likedId) ?: false
                 }
             }
         }
@@ -719,7 +762,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             var lastTick = SystemClock.elapsedRealtime()
             var lastSyncAt = 0L
-            var lastAdvanceAt = 0L
 
             while (true) {
                 if (!isTrackPlaying) {
@@ -753,7 +795,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     now - lastAdvanceAt >= MIN_ADVANCE_MS &&
                     isCurrentTrackInFavorites()
                 ) {
-                    lastAdvanceAt = now
                     advanceFavoritesTrack()
                     lastTick = SystemClock.elapsedRealtime()
                     lastSyncAt = 0L
@@ -813,10 +854,44 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 .also { Log.d(TAG, "Fine brano: sequenziale → $it") }
         }
         val next = list[favoritesTrackIndex]
+        lastAdvanceAt = SystemClock.elapsedRealtime()
         currentProgressMs = 0L
         playingTrackDetails = next
+        if (showLyrics) loadLyrics()
         syncFavoritesSelection()
         musicRepository?.play(next.uri, "")
+    }
+
+    /**
+     * Rete di sicurezza dell'avanzamento nei Preferiti.
+     *
+     * L'intercettazione della fine brano dipende dal nostro ticker: con lo
+     * schermo spento o l'app in sottofondo il `delay` viene rallentato e la
+     * soglia può non essere colta in tempo. A quel punto Spotify prosegue da
+     * solo con l'autoplay e finisce su una traccia a caso.
+     *
+     * Quando il player riporta una traccia che nei Preferiti non c'è, mentre
+     * prima ne stava suonando una che c'era, si torna sulla lista.
+     *
+     * Se l'avanzamento a orologio era invece già partito — e il comando si è
+     * perso proprio nel passaggio di brano — si rilancia quella stessa traccia
+     * invece di saltarne un'altra.
+     */
+    private fun recoverFavoritesAutoAdvance(endedId: String?) {
+        val list = favoritesTracks
+        if (list.isEmpty() || endedId == null) return
+
+        if (SystemClock.elapsedRealtime() - lastAdvanceAt < MIN_ADVANCE_MS) {
+            Log.w(TAG, "Autoplay intercettato: ripristino il brano già scelto")
+            list.getOrNull(favoritesTrackIndex)?.let { playFavoritesTrack(it) }
+            return
+        }
+
+        val endedIndex = list.indexOfFirst { it.id == endedId }
+        if (endedIndex < 0) return
+        Log.w(TAG, "Autoplay intercettato: avanzo dai Preferiti da $endedIndex")
+        favoritesTrackIndex = endedIndex
+        advanceFavoritesTrack()
     }
 
     /** Se l'utente sta guardando la lista dei Preferiti, allinea anche la riga evidenziata. */
