@@ -497,7 +497,9 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e // ri-lancia sempre la cancellazione — non loggarla come errore
         } catch (e: Exception) {
-            Log.e("MusicRepository", "Errore check preferiti", e)
+            // Il messaggio va nella riga principale: senza lo stacktrace non si
+            // distingue un token scaduto da un permesso mancante.
+            Log.e("MusicRepository", "Errore check preferiti: ${e.message}", e)
             false
         }
     }

@@ -171,8 +171,7 @@ class SpotifyManager(private val context: Context) {
         SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
             override fun onConnected(appRemote: SpotifyAppRemote) {
                 isConnecting = false
-                spotifyAppRemote = appRemote
-                subscribeToPlayerState()
+                attachRemote(appRemote)
                 Log.d("SpotifyManager", "Riconnesso! Avvio riproduzione: $uri")
                 playAfterConnect(uri, contextUri, trackIndex)
             }
@@ -236,9 +235,8 @@ class SpotifyManager(private val context: Context) {
         SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
             override fun onConnected(appRemote: SpotifyAppRemote) {
                 isConnecting = false
-                spotifyAppRemote = appRemote
+                attachRemote(appRemote)
                 Log.d("SpotifyManager", "Spotify App Remote connesso con successo!")
-                subscribeToPlayerState()
                 onConnected()
             }
 
@@ -259,12 +257,28 @@ class SpotifyManager(private val context: Context) {
     /** Remoto a cui è già agganciato il listener: uno solo per connessione. */
     private var stateSubscribedTo: SpotifyAppRemote? = null
 
+    /**
+     * Aggancia un nuovo remoto, staccando quello precedente.
+     *
+     * Ogni `connect()` (avvio, riconnessione per un play, ritorno dal login)
+     * produce un oggetto remoto diverso: senza staccare il vecchio restano
+     * vivi DUE listener e ogni evento del player verrebbe gestito due volte —
+     * due chiamate API per ogni cambio di brano.
+     */
+    private fun attachRemote(appRemote: SpotifyAppRemote) {
+        val previous = spotifyAppRemote
+        if (previous != null && previous !== appRemote) {
+            SpotifyAppRemote.disconnect(previous)
+        }
+        stateSubscribedTo = null
+        spotifyAppRemote = appRemote
+        subscribeToPlayerState()
+    }
+
     fun subscribeToPlayerState() {
         val remote = spotifyAppRemote ?: return
-        // `onConnected` richiama questa funzione ad ogni riconnessione (avvio,
-        // ritorno dal login, onResume): senza questo controllo gli eventi del
-        // player arriverebbero due volte e ogni azione verrebbe eseguita due
-        // volte — cosa che si vedeva chiaramente nei log.
+        // Difesa extra: `onConnected` può essere richiamato sulla stessa
+        // connessione, e un secondo aggancio duplicherebbe gli eventi.
         if (stateSubscribedTo === remote) return
         stateSubscribedTo = remote
         remote.playerApi.subscribeToPlayerState()?.setEventCallback { state ->

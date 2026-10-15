@@ -837,10 +837,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         // può ancora arrivare lo stato del brano che sta finendo, e riallinearlo
         // allora riporterebbe l'indice indietro di uno — facendo ripartire la
         // lista dalla traccia sbagliata.
-        val currentId = playingTrackDetails?.id
-        if (SystemClock.elapsedRealtime() - lastAdvanceAt >= RECOVER_WINDOW_MS) {
-            val currentIndex = list.indexOfFirst { it.id == currentId }
-            if (currentIndex >= 0) favoritesTrackIndex = currentIndex
+        val fromName = playingTrackDetails?.name ?: "?"
+        val fromIndex = list.indexOfFirst { it.id == playingTrackDetails?.id }
+        if (SystemClock.elapsedRealtime() - lastAdvanceAt >= RECOVER_WINDOW_MS && fromIndex >= 0) {
+            favoritesTrackIndex = fromIndex
         }
 
         favoritesTrackIndex = if (isLocalShuffleEnabled) {
@@ -852,7 +852,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         lastAdvanceAt = SystemClock.elapsedRealtime()
         currentProgressMs = 0L
         playingTrackDetails = next
-        Log.d(TAG, "Fine brano: da \"$currentId\" a ${favoritesTrackIndex} \"${next.name}\"")
+        Log.d(TAG, "Fine brano: da [$fromIndex] \"$fromName\" a [$favoritesTrackIndex] \"${next.name}\"")
         if (showLyrics) loadLyrics()
         syncFavoritesSelection()
         musicRepository?.play(next.uri, "")
@@ -889,7 +889,8 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
         val endedIndex = list.indexOfFirst { it.id == endedId }
         if (endedIndex < 0) return
-        Log.w(TAG, "Autoplay intercettato: avanzo dai Preferiti da \"$endedId\" (indice $endedIndex)")
+        Log.w(TAG, "Autoplay intercettato: Spotify toglie \"${list[endedIndex].name}\" " +
+            "(indice $endedIndex) → avanzo al successivo")
         favoritesTrackIndex = endedIndex
         advanceFavoritesTrack()
     }
