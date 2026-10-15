@@ -153,6 +153,16 @@ private fun Centered(modifier: Modifier, content: @Composable () -> Unit) {
 
 // ── Lyrics sincronizzate ──────────────────────────────────────────────────────
 
+/**
+ * Corpo del testo per le righe normali e per quella in evidenza.
+ *
+ * La riga attiva è più grande oltre che in grassetto: è l'unico modo di far
+ * capire a occhio dove siamo senza dover leggere. L'ingrandimento resta piccolo
+ * a mano, perché righe troppo alte falserebbero il centro della lista.
+ */
+private val NormalFontSize = 14.sp
+private val ActiveFontSize = 17.sp
+
 @Composable
 private fun SyncedLyrics(
     lines: List<LyricLine>,
@@ -210,7 +220,7 @@ private fun SyncedLyrics(
                 Text(
                     text = line.text,
                     color = color,
-                    fontSize = 14.sp,
+                    fontSize = if (active) ActiveFontSize else NormalFontSize,
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier
                         .fillMaxWidth()
