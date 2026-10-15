@@ -779,6 +779,14 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         val list = favoritesTracks
         if (list.isEmpty()) return
 
+        // L'indice salvato si aizza non appena il brano corrente cambia senza
+        // passare da qui (cambiato dall'app Spotify, o ripristinato all'avvio):
+        // in quel caso "indice + 1" porterebbe a un brano a caso. La posizione
+        // la decide il brano che stiamo suonando, non una variabile.
+        val currentId = playingTrackDetails?.id
+        val currentIndex = list.indexOfFirst { it.id == currentId }
+        if (currentIndex >= 0) favoritesTrackIndex = currentIndex
+
         favoritesTrackIndex = if (isLocalShuffleEnabled) {
             list.indices.random().also { Log.d(TAG, "Fine brano: shuffle → $it") }
         } else {
