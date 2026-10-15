@@ -488,8 +488,13 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             spotifyManager.pendingAuthCode != null -> {
-                // Codice OAuth già in volo (handleAuthCode lo gestirà): non aprire il browser
-                Log.d(TAG, "initializeSpotifyServices: pendingAuthCode presente, attendo handleAuthCode")
+                // Codice rimasto a metà (l'app è stata uccisa prima dello scambio):
+                // è monouso e ormai ingestibile da qui, quindi lo buttiamo via e
+                // torniamo al pulsante di login — non restiamo bloccati su una
+                // schermata di caricamento senza via d'uscita.
+                Log.w(TAG, "initializeSpotifyServices: pendingAuthCode orfano, lo cancello")
+                spotifyManager.pendingAuthCode = null
+                showLoginButton = true
             }
             else -> {
                 // Primo avvio: apri il browser una volta sola, poi ci si affida
@@ -522,6 +527,10 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             val success = musicRepository?.fetchWebToken(authCode, verifier) ?: false
+            // Il codice OAuth è monouso: va cancellato SEMPRE, anche se lo
+            // scambio fallisce, altrimenti al riavvio l'app resta in attesa
+            // di un callback che non arriverà più.
+            spotifyManager.pendingAuthCode = null
             if (success) {
                 Log.d(TAG, "Token ottenuto con successo")
                 tokenRefreshTick = !tokenRefreshTick

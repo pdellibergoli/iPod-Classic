@@ -187,8 +187,12 @@ class SpotifyManager(private val context: Context) {
     private fun playAfterConnect(uri: String, contextUri: String?, trackIndex: Int) {
         val playerApi = spotifyAppRemote?.playerApi ?: return
         if (!contextUri.isNullOrEmpty()) {
-            playerApi.play(contextUri)
-            playerApi.skipToIndex(contextUri, trackIndex)
+            // Stesso ragionamento di MusicRepository.play: il salto deve
+            // aspettare che il contesto sia partito, altrimenti la coda che
+            // resta a Spotify non è la playlist.
+            playerApi.play(contextUri).setResultCallback {
+                playerApi.skipToIndex(contextUri, trackIndex)
+            }
         } else {
             playerApi.play(uri)
         }
@@ -212,9 +216,21 @@ class SpotifyManager(private val context: Context) {
         }
         isConnecting = true
 
+        // La finestra di autorizzazione compare SOLO al primo login. Se abbiamo
+        // già una sessione salvata, la richiesta è silenziosa: `showAuthView(true)`
+        // è la causa principale del "Spotify mi chiede di accedere" che ricompare
+        // ad ogni riconnessione dell'App Remote.
+        connectWithAuthView(showAuthView = !hasStoredSession, onConnected = onConnected)
+    }
+
+    /**
+     * @param retriedAuth true se questo è il secondo tentativo, quello con la
+     *   finestra di autorizzazione: serve a non entrare in loop.
+     */
+    private fun connectWithAuthView(showAuthView: Boolean, retriedAuth: Boolean = false, onConnected: () -> Unit) {
         val params = ConnectionParams.Builder(spotifyClientId)
             .setRedirectUri(redirectUri)
-            .showAuthView(true)
+            .showAuthView(showAuthView)
             .build()
 
         SpotifyAppRemote.connect(context, params, object : Connector.ConnectionListener {
@@ -227,6 +243,13 @@ class SpotifyManager(private val context: Context) {
             }
 
             override fun onFailure(t: Throwable) {
+                // Connessione silenziosa rifiutata (token App Remote scaduto o
+                // mai emesso): questa volta sì che serve chiedere l'accesso.
+                if (!showAuthView && !retriedAuth) {
+                    Log.w("SpotifyManager", "Connessione silenziosa rifiutata, riprovo con autorizzazione")
+                    connectWithAuthView(showAuthView = true, retriedAuth = true, onConnected = onConnected)
+                    return
+                }
                 isConnecting = false
                 Log.e("SpotifyManager", "Dettaglio errore: ${t.cause?.message}", t)
             }

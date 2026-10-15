@@ -93,12 +93,13 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
             Log.w(TAG, "Refresh token rifiutato (HTTP ${e.code()})")
             false
         } catch (e: Exception) {
-            // Errore di rete: non buttiamo via la sessione, riproviamo alla
-            // prossima chiamata. Solo dopo diversi fallimenti chiediamo il login.
+            // Errore di rete: NON buttiamo via la sessione, nemmeno dopo molti
+            // tentativi. Un tunnel, l'aeroplano o un Wi-Fi morto non sono una
+            // revoca del token: qui si può solo riprovare, e lo rifaremo alla
+            // prossima chiamata finché la rete non torna.
             transientRefreshFailures++
-            lastRefreshFailure = if (transientRefreshFailures >= 3)
-                RefreshFailure.PERMANENT else RefreshFailure.TRANSIENT
-            Log.e(TAG, "Refresh token fallito (rete)", e)
+            lastRefreshFailure = RefreshFailure.TRANSIENT
+            Log.e(TAG, "Refresh token fallito (rete, tentativo $transientRefreshFailures)", e)
             false
         }
     }
@@ -443,11 +444,21 @@ class MusicRepository(private val spotifyManager: SpotifyManager) {
         }
         Log.d("MusicRepository", "Tentativo di riproduzione: $trackUri")
         if (!contextUri.isNullOrEmpty()) {
-            try {
-                playerApi.play(contextUri)
+            // Il salto va INCATENATO al play, non lanciato in parallelo:
+            // skipToIndex applicato prima che il contesto sia partito viene
+            // ignorato (o peggio, applicato al contesto precedente) e la coda
+            // che resta a Spotify non è più la playlist — da lì il "brano
+            // successivo" sbagliato quando una traccia finisce da sola.
+            // Con un contesto non si può suonare la sola traccia: l'indice
+            // dentro il contesto è l'unica via per arrivare a `trackUri`.
+            playerApi.play(contextUri).setResultCallback {
                 playerApi.skipToIndex(contextUri, trackIndex)
-            } catch (e: Exception) {
-                Log.e("MusicRepository", "Fallback a traccia singola", e)
+                    .setErrorCallback { e ->
+                        Log.e("MusicRepository", "skipToIndex fallito", e)
+                        playerApi.play(trackUri)
+                    }
+            }.setErrorCallback { e ->
+                Log.e("MusicRepository", "play del contesto fallito, traccia singola", e)
                 playerApi.play(trackUri)
             }
         } else {
