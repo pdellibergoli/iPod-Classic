@@ -45,8 +45,7 @@ private const val END_OF_TRACK_MS = 1_500L   // finestra di "fine brano"
 private const val MIN_ADVANCE_MS = 3_000L    // anti doppio avanzamento dei Preferiti
 private const val SEEK_STEP_MS = 5_000L      // passo del salto rapido (5 s)
 private const val SEEK_GRACE_MS = 1_500L     // niente riallineo subito dopo un salto
-private const val AUTO_RECOVER_MS = 20_000L  // "era quasi finito" per l'autoplay
-private const val RECOVER_COOLDOWN_MS = 5_000L // anti loop di ripristino
+private const val RECOVER_WINDOW_MS = 5_000L // anti loop + "l'ultimo avanzamento è recente?"
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, SEARCH_RESULTS, TRACKS, TRACK_DETAILS, SETTINGS, ABOUT
@@ -645,17 +644,18 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 // sottofondo può non arrivare in tempo. Se mentre suonava un
                 // Preferito Spotify passa da solo a una traccia che nei Preferiti
                 // non c'è, quello è l'autoplay di fine brano e va corretto.
-                // I valori vengono presi PRIMA di sovrascriverli: sono del
-                // brano che stava finendo.
+                //
+                // I valori vengono presi PRIMA di sovrascriverli, ma NON si guarda
+                // la posizione: appena è partito l'avanzamento `currentProgressMs`
+                // è stato azzerato, quindi un controllo del genere non avrebbe mai
+                // permesso la correzione proprio nel caso in cui serve.
                 val previousId = playingTrackDetails?.id
                 val now = SystemClock.elapsedRealtime()
                 val autoAdvanced = playingFromFavorites &&
-                    now - lastRecoverAt >= RECOVER_COOLDOWN_MS &&
                     previousId != null && previousId != cleanedId &&
                     favoritesTracks.any { it.id == previousId } &&
                     !favoritesTracks.any { it.id == cleanedId } &&
-                    trackDurationMs > 0L &&
-                    currentProgressMs >= trackDurationMs - AUTO_RECOVER_MS
+                    now - lastRecoverAt >= RECOVER_WINDOW_MS
 
                 trackDurationMs = track.duration
                 currentProgressMs = playerState.playbackPosition
@@ -676,10 +676,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 repeatMode = playerState.playbackOptions.repeatMode
 
                 track.imageUri?.raw?.let { raw ->
-                    val imageId = raw.substringAfter("image:")
-                    val finalUrl = "https://i.scdn.co/image/$imageId"
-                    Log.d("IPodViewModel", "DEBUG URL: $finalUrl")
-                    currentCoverUrl = finalUrl
+                    currentCoverUrl = "https://i.scdn.co/image/${raw.substringAfter("image:")}"
                 }
 
                 playingTrackDetails = SpotifyTrackDetails(
@@ -690,13 +687,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                     album = SpotifyAlbumModelInfo(id = "", name = track.album.name, uri = "")
                 )
 
-                // Se quei Preferiti sono in riproduzione, l'indice segue il brano
-                // che suona DAVVERO: un cambio fatto dall'app ufficiale non deve
-                // mandare "successivo" e "precedente" fuori lista.
-                if (playingFromFavorites) {
-                    val idx = favoritesTracks.indexOfFirst { it.id == cleanedId }
-                    if (idx >= 0) favoritesTrackIndex = idx
-                }
+                // L'indice dei Preferiti NON viene toccato qui: è già ricalato
+                // sul brano che suona dentro `advanceFavoritesTrack`. Sincronizzarlo
+                // anche sullo stato del player lasciava che un evento in ritardo
+                // (quello del brano che sta finendo) riportasse l'indice indietro
+                // di uno e facesse avanzare sulla traccia sbagliata.
 
                 // Spotify può essere andato avanti da solo con l'autoplay: si
                 // torna subito sui Preferiti, prima di aggiornare lyrics e
@@ -790,10 +785,15 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Fine brano: solo i Preferiti vanno fatti avanzare da noi, perché
                 // sono una playlist virtuale che Spotify non conosce.
+                //
+                // Non si chiede più "il brano corrente è nei Preferiti?": se
+                // Spotify finisce fuori lista il recupero nello stato del player
+                // lo riporta a posto, mentre quella condizione, se falliva una
+                // volta sola, disattivava l'avanzamento per tutta la sessione.
                 val nearEnd = currentProgressMs >= trackDurationMs - END_OF_TRACK_MS
                 if (nearEnd && playingFromFavorites &&
-                    now - lastAdvanceAt >= MIN_ADVANCE_MS &&
-                    isCurrentTrackInFavorites()
+                    favoritesTracks.isNotEmpty() &&
+                    now - lastAdvanceAt >= MIN_ADVANCE_MS
                 ) {
                     advanceFavoritesTrack()
                     lastTick = SystemClock.elapsedRealtime()
@@ -801,16 +801,6 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-    }
-
-    /**
-     * true se il brano che stiamo mostrando fa ancora parte dello snapshot dei
-     * Preferiti. Se l'utente ha cambiato brano dall'app Spotify, smettiamo di
-     * avanzare in autonomia: non è più una riproduzione nostra.
-     */
-    private fun isCurrentTrackInFavorites(): Boolean {
-        val id = playingTrackDetails?.id ?: return false
-        return favoritesTracks.any { it.id == id }
     }
 
     /** Chiede a Spotify la posizione reale della traccia in riproduzione. */
@@ -839,24 +829,30 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         val list = favoritesTracks
         if (list.isEmpty()) return
 
-        // L'indice salvato si aizza non appena il brano corrente cambia senza
-        // passare da qui (cambiato dall'app Spotify, o ripristinato all'avvio):
-        // in quel caso "indice + 1" porterebbe a un brano a caso. La posizione
-        // la decide il brano che stiamo suonando, non una variabile.
+        // L'indice salvato si azza se il brano che suona è cambiato senza passare
+        // da qui (cambiato dall'app Spotify, o ripristinato all'avvio): in quel
+        // caso "indice + 1" porterebbe a un brano a caso.
+        //
+        // NON si fa invece subito dopo un nostro avanzamento: in quella finestra
+        // può ancora arrivare lo stato del brano che sta finendo, e riallinearlo
+        // allora riporterebbe l'indice indietro di uno — facendo ripartire la
+        // lista dalla traccia sbagliata.
         val currentId = playingTrackDetails?.id
-        val currentIndex = list.indexOfFirst { it.id == currentId }
-        if (currentIndex >= 0) favoritesTrackIndex = currentIndex
+        if (SystemClock.elapsedRealtime() - lastAdvanceAt >= RECOVER_WINDOW_MS) {
+            val currentIndex = list.indexOfFirst { it.id == currentId }
+            if (currentIndex >= 0) favoritesTrackIndex = currentIndex
+        }
 
         favoritesTrackIndex = if (isLocalShuffleEnabled) {
-            list.indices.random().also { Log.d(TAG, "Fine brano: shuffle → $it") }
+            list.indices.random()
         } else {
             (favoritesTrackIndex + 1).coerceAtMost(list.lastIndex)
-                .also { Log.d(TAG, "Fine brano: sequenziale → $it") }
         }
         val next = list[favoritesTrackIndex]
         lastAdvanceAt = SystemClock.elapsedRealtime()
         currentProgressMs = 0L
         playingTrackDetails = next
+        Log.d(TAG, "Fine brano: da \"$currentId\" a ${favoritesTrackIndex} \"${next.name}\"")
         if (showLyrics) loadLyrics()
         syncFavoritesSelection()
         musicRepository?.play(next.uri, "")
@@ -881,15 +877,19 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
         val list = favoritesTracks
         if (list.isEmpty() || endedId == null) return
 
-        if (SystemClock.elapsedRealtime() - lastAdvanceAt < MIN_ADVANCE_MS) {
-            Log.w(TAG, "Autoplay intercettato: ripristino il brano già scelto")
-            list.getOrNull(favoritesTrackIndex)?.let { playFavoritesTrack(it) }
+        // L'ultimo avanzamento è recente: l'abbiamo scelto NOI e il comando si
+        // è perso nel passaggio di brano. Si rilancia quello, non se ne sceglie
+        // un altro.
+        if (SystemClock.elapsedRealtime() - lastAdvanceAt < RECOVER_WINDOW_MS) {
+            val chosen = list.getOrNull(favoritesTrackIndex) ?: return
+            Log.w(TAG, "Autoplay intercettato: ripristino \"${chosen.name}\" (indice $favoritesTrackIndex)")
+            playFavoritesTrack(chosen)
             return
         }
 
         val endedIndex = list.indexOfFirst { it.id == endedId }
         if (endedIndex < 0) return
-        Log.w(TAG, "Autoplay intercettato: avanzo dai Preferiti da $endedIndex")
+        Log.w(TAG, "Autoplay intercettato: avanzo dai Preferiti da \"$endedId\" (indice $endedIndex)")
         favoritesTrackIndex = endedIndex
         advanceFavoritesTrack()
     }

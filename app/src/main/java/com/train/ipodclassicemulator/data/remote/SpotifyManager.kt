@@ -256,8 +256,18 @@ class SpotifyManager(private val context: Context) {
         })
     }
 
+    /** Remoto a cui è già agganciato il listener: uno solo per connessione. */
+    private var stateSubscribedTo: SpotifyAppRemote? = null
+
     fun subscribeToPlayerState() {
-        spotifyAppRemote?.playerApi?.subscribeToPlayerState()?.setEventCallback { state ->
+        val remote = spotifyAppRemote ?: return
+        // `onConnected` richiama questa funzione ad ogni riconnessione (avvio,
+        // ritorno dal login, onResume): senza questo controllo gli eventi del
+        // player arriverebbero due volte e ogni azione verrebbe eseguita due
+        // volte — cosa che si vedeva chiaramente nei log.
+        if (stateSubscribedTo === remote) return
+        stateSubscribedTo = remote
+        remote.playerApi.subscribeToPlayerState()?.setEventCallback { state ->
             isShuffling = state.playbackOptions.isShuffling
             onPlayerStateChanged?.invoke(state)
         }
@@ -273,6 +283,7 @@ class SpotifyManager(private val context: Context) {
     fun disconnect() {
         SpotifyAppRemote.disconnect(spotifyAppRemote)
         spotifyAppRemote = null
+        stateSubscribedTo = null
     }
 
     fun adjustVolume(up: Boolean) {
