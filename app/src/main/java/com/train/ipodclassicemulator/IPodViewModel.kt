@@ -43,6 +43,8 @@ private const val IDLE_TICK_MS = 1000L       // solo un controllo quando non suo
 private const val RESYNC_MS = 5_000L         // riallinea la barra al player reale
 private const val END_OF_TRACK_MS = 1_500L   // finestra di "fine brano"
 private const val MIN_ADVANCE_MS = 3_000L    // anti doppio avanzamento dei Preferiti
+private const val SEEK_STEP_MS = 5_000L      // passo del salto rapido (5 s)
+private const val SEEK_GRACE_MS = 1_500L     // niente riallineo subito dopo un salto
 
 enum class ScreenState {
     CREDENTIALS_SETUP, MAIN_MENU, SPOTIFY_MENU, PLAYLISTS, ALBUMS, ARTISTS, SEARCH, SEARCH_RESULTS, TRACKS, TRACK_DETAILS, SETTINGS, ABOUT
@@ -199,6 +201,9 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var lastInteractionAt = SystemClock.elapsedRealtime()
+
+    /** Ultimo salto rapido: per un attimo la barra non viene riallineata. */
+    private var lastSeekAt = 0L
 
     /**
      * Registra un'attività dell'utente: riaccende la LCD e riavvia il conto alla
@@ -769,6 +774,11 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Chiede a Spotify la posizione reale della traccia in riproduzione. */
     private fun syncProgressFromPlayer() {
+        // Subito dopo un salto rapido Spotify potrebbe non aver ancora
+        // applicato la nuova posizione: riallineare adesso farebbe rimbalzare
+        // la barra indietro. Per SEEK_GRACE_MS ci fidiamo del valore locale.
+        if (SystemClock.elapsedRealtime() - lastSeekAt < SEEK_GRACE_MS) return
+
         spotifyManager.spotifyAppRemote?.playerApi?.playerState?.setResultCallback { state ->
             val track = state.track ?: return@setResultCallback
             if (state.isPaused) return@setResultCallback
@@ -1236,6 +1246,34 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             spotifyManager.skipPrevious()
             if (screenState == ScreenState.TRACKS && selectedTrackIndex > 0) selectedTrackIndex--
         }
+    }
+
+    fun seekForward()  = seekBy(+SEEK_STEP_MS)
+    fun seekBackward() = seekBy(-SEEK_STEP_MS)
+
+    /**
+     * Salto rapido avanti/indietro, ripetuto ogni poche centinaia di
+     * millisecondi mentre ▶▶ / ◀◀ resta premuto sulla ruota.
+     *
+     * La posizione la sposta Spotify (seek relativo: non serve sapere dove si
+     * siamo), ma la barra la muoviamo subito noi — altrimenti si vedrebbe il
+     * movimento solo al riallineamento successivo, con un ritardo fino a
+     * RESYNC_MS.
+     */
+    private fun seekBy(deltaMs: Long) {
+        if (playingTrackDetails == null) return
+        noteInteraction()
+
+        val from = currentProgressMs
+        val target = if (trackDurationMs > 0L)
+            (from + deltaMs).coerceIn(0L, trackDurationMs)
+        else
+            (from + deltaMs).coerceAtLeast(0L)
+        if (target == from) return          // già ai bordi: nessun salto
+
+        currentProgressMs = target
+        lastSeekAt = SystemClock.elapsedRealtime()
+        spotifyManager.seekRelative(deltaMs)
     }
 
     private fun playFavoritesTrack(track: SpotifyTrackDetails) {

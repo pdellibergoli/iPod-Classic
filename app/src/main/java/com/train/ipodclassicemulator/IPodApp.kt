@@ -214,6 +214,9 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
                 onPlayPauseClick = { viewModel.togglePlayPause() },
                 onNextClick = { viewModel.skipNext() },
                 onPreviousClick = { viewModel.skipPrevious() },
+                // Premuta lunga su ◀◀ / ▶▶: salto rapido avanti/indietro.
+                onSeekNext = { viewModel.seekForward() },
+                onSeekPrevious = { viewModel.seekBackward() },
                 // Vibrazione + click sonoro, con intensità scelta nelle Impostazioni.
                 // Ogni tick e ogni pressione tengono anche sveglia la retroilluminazione.
                 onTick = { viewModel.noteInteraction(); viewModel.feedback.click() },

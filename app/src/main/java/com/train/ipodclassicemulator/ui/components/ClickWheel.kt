@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -21,9 +22,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.train.ipodclassicemulator.ui.theme.IPodTheme
 import kotlin.math.atan2
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Diametro della ruota usato come riferimento per tutte le proporzioni. */
 private const val BASE_WHEEL_SIZE = 280f
+
+/**
+ * Intervallo tra due passi di salto rapido, mentre ▶▶ / ◀◀ resta premuto.
+ *
+ * Il passo (quanti millisecondi si salta) è una scelta del ViewModel: qui c'è
+ * solo il ritmo, che deve essere abbastanza rapido da sembrare un salto vero e
+ * abbastanza lento da lasciare leggibile la barra.
+ */
+private const val SEEK_REPEAT_MS = 250L
+
+/** Zona della ruota in cui è caduto il tocco. */
+private enum class WheelZone { MENU, PLAY, NEXT, PREVIOUS, CENTER }
 
 @Composable
 fun ClickWheel(
@@ -39,6 +53,10 @@ fun ClickWheel(
     onPlayPauseClick: () -> Unit = {},
     onNextClick: () -> Unit = {},
     onPreviousClick: () -> Unit = {},
+    /** Salto rapido avanti: ▶▶ tenuto premuto. */
+    onSeekNext: () -> Unit = {},
+    /** Salto rapido indietro: ◀◀ tenuto premuto. */
+    onSeekPrevious: () -> Unit = {},
     /** Un "detent" della ruota durante lo scorrimento. */
     onTick: () -> Unit = {},
     /** Pressione di uno dei cinque tasti. */
@@ -73,38 +91,65 @@ fun ClickWheel(
                 shape = CircleShape
             )
             .pointerInput(Unit) {
-                // Utilizziamo awaitPointerEventScope per gestire tutto insieme
+                val centerX = size.width / 2f
+                val centerY = size.height / 2f
+
+                // L'anello interno è ~96dp su una ruota di 280dp: sotto quel
+                // raggio si è sul tasto centrale, non sulla ruota. Serve perché
+                // l'angolo di (0,0) è indefinito e finirebbe in NEXT.
+                val centerRadius = size.width * 0.18f
+
+                fun zoneOf(offset: Offset): WheelZone {
+                    val x = offset.x - centerX
+                    val y = offset.y - centerY
+                    if (Math.hypot(x.toDouble(), y.toDouble()) < centerRadius) return WheelZone.CENTER
+
+                    val angle = Math.toDegrees(atan2(y.toDouble(), x.toDouble()))
+                    val a = if (angle < 0) angle + 360 else angle
+                    return when {
+                        a in 225.0..315.0 -> WheelZone.MENU
+                        a in 45.0..135.0 -> WheelZone.PLAY
+                        a >= 315.0 || a <= 45.0 -> WheelZone.NEXT
+                        else -> WheelZone.PREVIOUS
+                    }
+                }
+
                 detectTapGestures(
+                    onPress = { offset ->
+                        // Premessa lunga su ▶▶ / ◀◀: salto rapido, come sul
+                        // vero iPod. Sotto la soglia non si fa niente, perché
+                        // è un semplice tap e ci pensa `onTap`.
+                        val zone = zoneOf(offset)
+                        if (zone == WheelZone.NEXT || zone == WheelZone.PREVIOUS) {
+                            val rilasciato = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                tryAwaitRelease()
+                            }
+                            if (rilasciato == null) {
+                                // Soglia superata: il dito resta giù e il salto
+                                // si ripete finché non si alza.
+                                val seek = if (zone == WheelZone.NEXT) onSeekNext else onSeekPrevious
+                                while (true) {
+                                    seek()
+                                    if (withTimeoutOrNull(SEEK_REPEAT_MS) { tryAwaitRelease() } != null) break
+                                }
+                            }
+                        }
+                    },
                     onTap = { offset ->
                         // 🟢 TAP: feedback fisico/sonoro
                         onPress()
 
-                        val centerX = size.width / 2f
-                        val centerY = size.height / 2f
-                        val x = offset.x - centerX
-                        val y = offset.y - centerY
-                        val angle = Math.toDegrees(atan2(y.toDouble(), x.toDouble()))
-                        val normalizedAngle = if (angle < 0) angle + 360 else angle
-
-                        when {
-                            normalizedAngle in 225.0..315.0 -> onMenuClick()
-                            normalizedAngle in 45.0..135.0 -> onPlayPauseClick()
-                            normalizedAngle >= 315.0 || normalizedAngle <= 45.0 -> onNextClick()
-                            normalizedAngle in 135.0..225.0 -> onPreviousClick()
+                        when (zoneOf(offset)) {
+                            WheelZone.MENU -> onMenuClick()
+                            WheelZone.PLAY -> onPlayPauseClick()
+                            WheelZone.NEXT -> onNextClick()
+                            WheelZone.PREVIOUS -> onPreviousClick()
+                            WheelZone.CENTER -> Unit // gestito dal tasto interno
                         }
                     },
                     onLongPress = { offset ->
                         onPress()
-                        val centerX = size.width / 2f
-                        val centerY = size.height / 2f
-                        val x = offset.x - centerX
-                        val y = offset.y - centerY
-                        val angle = Math.toDegrees(atan2(y.toDouble(), x.toDouble()))
-                        val normalizedAngle = if (angle < 0) angle + 360 else angle
-
-                        if (normalizedAngle in 225.0..315.0) {
-                            onMenuLongClick()
-                        }
+                        if (zoneOf(offset) == WheelZone.MENU) onMenuLongClick()
                     }
                 )
             }

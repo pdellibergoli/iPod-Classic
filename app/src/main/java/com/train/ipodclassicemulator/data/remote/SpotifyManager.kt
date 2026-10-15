@@ -268,6 +268,8 @@ class SpotifyManager(private val context: Context) {
     fun pausePlayback()                { spotifyAppRemote?.playerApi?.pause() }
     fun skipNext()                     { spotifyAppRemote?.playerApi?.skipNext() }
     fun skipPrevious()                 { spotifyAppRemote?.playerApi?.skipPrevious() }
+    /** Salto relativo (ms) dentro il brano corrente: usato dal salto rapido. */
+    fun seekRelative(deltaMs: Long)    { spotifyAppRemote?.playerApi?.seekToRelativePosition(deltaMs) }
     fun disconnect() {
         SpotifyAppRemote.disconnect(spotifyAppRemote)
         spotifyAppRemote = null
