@@ -219,6 +219,15 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * true quando lo schermo NON deve spegnersi: mentre si leggono le lyrics
+     * non c'è interazione con la ruota per minuti, e farle spegnere le rende
+     * inutilizzabili. Vale sia per la LCD dell'iPod sia per la schermata del
+     * telefono (vedi [keepScreenOn]).
+     */
+    val keepAwake: Boolean
+        get() = showLyrics
+
+    /**
      * Attenua la LCD dopo il ritardo scelto e la riaccende al primo input.
      *
      * Un controllo al secondo è sufficiente (e costa una scrittura di stato che,
@@ -229,7 +238,7 @@ class IPodViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 delay(1_000)
                 val delaySec = backlightDelaySec
-                isScreenDimmed = if (delaySec <= 0) false
+                isScreenDimmed = if (delaySec <= 0 || keepAwake) false
                     else SystemClock.elapsedRealtime() - lastInteractionAt >= delaySec * 1_000L
             }
         }

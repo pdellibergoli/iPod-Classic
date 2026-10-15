@@ -62,6 +62,17 @@ fun IPodApp(viewModel: IPodViewModel, themeManager: ThemeManager) {
         onDispose { context.unregisterReceiver(receiver) }
     }
 
+    // Mentre si leggono le lyrics la ruota non riceve niente per minuti: senza
+    // questo flag il telefono andrebbe in standby a metà strofa. Il flag vale
+    // per tutta la finestra e si toglie non appena si esce dalle lyrics.
+    val keepAwake = viewModel.keepAwake
+    DisposableEffect(keepAwake) {
+        val window = (context as? android.app.Activity)?.window
+        if (keepAwake) window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+
     // Load initial Spotify data once token is ready
     LaunchedEffect(viewModel.tokenRefreshTick) { viewModel.loadInitialDataIfReady() }
 
