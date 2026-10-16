@@ -48,3 +48,60 @@ interface LyricsApiService {
         const val USER_AGENT = "iPodClassicEmulator/1.0 (Android; open source)"
     }
 }
+
+/**
+ * lrcmux.dev — seconda fonte.
+ *
+ * Espone KuGou, YouTube Music e Musixmatch senza chiavi API e con i tempi già
+ * in millisecondi, quindi qui non serve nemmeno il parser LRC. Copre i brani
+ * che LRCLIB non ha, e LRCLIB risponde anche 429 appena si esagera.
+ */
+interface LrcmuxApiService {
+
+    @GET("get")
+    suspend fun get(
+        @Query("artist") artist: String,
+        @Query("title") title: String,
+        @Query("format") format: String,
+        @Query("level") level: String,
+        @Header("User-Agent") userAgent: String
+    ): LrcmuxResponse
+
+    companion object {
+        const val BASE_URL = "https://api.lrcmux.dev/"
+        const val FORMAT_JSON = "json"
+        /** Livello di sincronizzazione richiesto: riga per riga. */
+        const val LEVEL_LINE = "line"
+    }
+}
+
+/** Risposta di lrcmux. */
+data class LrcmuxResponse(
+    val track: LrcmuxTrack? = null,
+    val meta: LrcmuxMeta? = null,
+    val lines: List<LrcmuxLine>? = null
+)
+
+data class LrcmuxTrack(
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
+    /** In secondi, come su LRCLIB. */
+    val duration: Double? = null
+)
+
+data class LrcmuxMeta(
+    val source: LrcmuxSource? = null,
+    val level: String? = null
+)
+
+data class LrcmuxSource(
+    val name: String? = null
+)
+
+/** Una riga di lrcmux: `start` ed `end` sono già in millisecondi. */
+data class LrcmuxLine(
+    val text: String? = null,
+    val start: Long? = null,
+    val end: Long? = null
+)

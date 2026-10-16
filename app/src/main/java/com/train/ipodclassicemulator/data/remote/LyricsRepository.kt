@@ -1,7 +1,9 @@
 package com.train.ipodclassicemulator.data.remote
 
+import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import retrofit2.Retrofit
@@ -11,52 +13,30 @@ import java.security.MessageDigest
 import java.text.Normalizer
 import kotlin.math.abs
 
-private const val TAG = "LyricsRepository"
-
-/**
- * Punteggio minimo perché una candidata sia considerata il brano giusto.
- * Con i pesi di [score] servono almeno titolo + artista: nessuna delle due
- * singole basta, così non si attaccano le lyrics sbagliate.
- */
-private const val MIN_SCORE = 60
-
-// ── Formato della cache su disco ──────────────────────────────────────────────
-
-private const val KIND_SYNCED = "synced"
-private const val KIND_PLAIN = "plain"
-
-/**
- * Voce serializzata in cache. Tutti i parametri hanno un default perché a
- * Gson serve un costruttore senza argomenti per istanziarla.
- */
-private data class CachedLyrics(
-    val kind: String = "",
-    val lines: List<LyricLine>? = null,
-    val text: String? = null
-)
-
-/** Esito della ricerca delle lyrics di un brano. */
-sealed class LyricsResult {
-    /** Lyrics riga per riga con i timestamp: si può evidenziare la riga corrente. */
-    data class Synced(val lines: List<LyricLine>) : LyricsResult()
-
-    /** Solo testo, nessuna sincronizzazione disponibile. */
-    data class Plain(val text: String) : LyricsResult()
-
-    /** Nessuna lyrics trovata per questo brano. */
-    object None : LyricsResult()
+/** Cosa serve alla UI per mostrare la schermata delle lyrics. */
+sealed interface LyricsResult {
+    /** Testo sincronizzato: è la riga più vicina al tempo corrente che si evidenzia. */
+    data class Synced(val lines: List<LyricLine>) : LyricsResult
+    /** Solo testo, senza tempi: si scorre a mano. */
+    data class Plain(val text: String) : LyricsResult
+    /** Non trovate. */
+    object None : LyricsResult
 }
 
 /**
- * Scarica le lyrics da LRCLIB e le tiene in cache.
- *
- * Due livelli: la mappa in memoria, e i file sotto `cacheDir` che sopravvivono
- * al riavvio dell'app. Una sola chiamata per brano — i candidati li peschiamo
- * noi in base a titolo, artista e durata.
- *
- * @param cacheDir cartella dove scrivere la cache; `null` disabilita il disco
+ * Scarica le lyrics sincronizzate da due fonti in ordine di priorità:
+ * 1. LRCLIB
+ * 2. lrcmux
  */
-class LyricsRepository(private val cacheDir: File? = null) {
+class LyricsRepository(private val context: Context) {
+
+    private val cacheDir: File?
+        get() = try {
+            File(context.cacheDir, "lyrics_cache").apply { mkdirs() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Cartella cache lyrics non disponibile", e)
+            null
+        }
 
     private val gson = Gson()
 
@@ -68,6 +48,15 @@ class LyricsRepository(private val cacheDir: File? = null) {
             .create(LyricsApiService::class.java)
     }
 
+    /** Seconda fonte: entra in gioco quando LRCLIB non ha il brano o non risponde. */
+    private val lrcmuxApi: LrcmuxApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl(LrcmuxApiService.BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(LrcmuxApiService::class.java)
+    }
+
     /** Access-order così le canzoni che si ascoltano spesso restano in testa. */
     private val cache = object : LinkedHashMap<String, LyricsResult>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LyricsResult>) =
@@ -75,10 +64,8 @@ class LyricsRepository(private val cacheDir: File? = null) {
     }
 
     /**
-     * @param durationMs durata nota dal player; serve solo come bonus di
-     *   disambiguazione, non è obbligatoria.
-     * @return le lyrics, oppure [LyricsResult.None] se non trovate o la rete
-     *   non risponde (mai una eccezione: la schermata deve solo mostrare un testo).
+     * @param durationMs durata nota dal player; serve solo come bonus di disambiguazione.
+     * @return le lyrics, oppure [LyricsResult.None] se non trovate o in assenza di rete.
      */
     suspend fun getLyrics(
         title: String,
@@ -98,25 +85,102 @@ class LyricsRepository(private val cacheDir: File? = null) {
             return it
         }
 
-        val result = try {
+        var lrclibAnswered = false
+        val lrclibResult = try {
             val candidates = apiService.search(
                 query = "$title $artist",
                 userAgent = LyricsApiService.USER_AGENT
             )
+            lrclibAnswered = true
             pick(candidates, title, artist, album, durationMs)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Log.w(TAG, "Scaricamento lyrics fallito per \"$title\"", e)
-            LyricsResult.None
+            Log.w(TAG, "LRCLIB non raggiungibile per \"$title\": ${e.message}")
+            null
         }
 
-        synchronized(cache) { cache[key] = result }
-        saveToDisk(file, result)
+        val fromLrclib = lrclibResult?.takeIf { it !is LyricsResult.None }
+
+        var lrcmuxAnswered = false
+        val fromLrcmux = if (fromLrclib != null) null else try {
+            val fetched = fetchFromLrcmux(title, artist)
+            lrcmuxAnswered = true
+            fetched
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Lrcmux non raggiungibile per \"$title\": ${e.message}")
+            null
+        }
+
+        val result = fromLrclib ?: fromLrcmux ?: LyricsResult.None
+
+        val definitive = result !is LyricsResult.None || (lrclibAnswered && lrcmuxAnswered)
+        if (definitive) {
+            synchronized(cache) { cache[key] = result }
+            saveToDisk(file, result)
+        }
         return result
+    }
+
+    // ── Seconda fonte: lrcmux ─────────────────────────────────────────────────
+
+    private suspend fun fetchFromLrcmux(title: String, artist: String): LyricsResult {
+        val response = lrcmuxApi.get(
+            artist = artist,
+            title = title,
+            format = LrcmuxApiService.FORMAT_JSON,
+            level = LrcmuxApiService.LEVEL_LINE,
+            userAgent = LyricsApiService.USER_AGENT
+        )
+
+        val track = response.track
+        if (track == null || !isSameTrack(
+                wantedTitle = title,
+                gotTitle = track.title.orEmpty(),
+                wantedArtist = artist,
+                gotArtist = track.artist.orEmpty()
+            )
+        ) {
+            Log.w(TAG, "Lrcmux: brano non corrispondente \"${track?.title}\"")
+            return LyricsResult.None
+        }
+
+        val lines = response.lines
+            .orEmpty()
+            .mapNotNull { line ->
+                val start = line.start ?: return@mapNotNull null
+                line.text?.trim()?.takeIf { it.isNotEmpty() }?.let { LyricLine(start, it) }
+            }
+            .sortedBy { it.timeMs }
+
+        val source = response.meta?.source?.name
+        Log.d(TAG, "Lrcmux: ${lines.size} righe per \"$title\" (fonte: $source)")
+        return if (lines.isNotEmpty()) LyricsResult.Synced(lines) else LyricsResult.None
+    }
+
+    private fun isSameTrack(
+        wantedTitle: String,
+        gotTitle: String,
+        wantedArtist: String,
+        gotArtist: String
+    ): Boolean {
+        val wanted = normalize(wantedTitle)
+        val got = normalize(gotTitle)
+        val titleOk = wanted.isEmpty() || got.isEmpty() ||
+                wanted == got || wanted in got || got in wanted
+
+        val wantedA = normalize(wantedArtist)
+        val gotA = normalize(gotArtist)
+        val artistOk = wantedA.isEmpty() || gotA.isEmpty() ||
+                wantedA == gotA || wantedA in gotA || gotA in wantedA
+
+        return titleOk && artistOk
     }
 
     // ── Cache su disco ────────────────────────────────────────────────────────
 
-    /** SHA-1 del nome: i titoli possono contenere qualsiasi carattere. */
     private fun cacheFile(key: String): File? {
         val dir = cacheDir ?: return null
         val digest = MessageDigest.getInstance("SHA-1")
@@ -150,9 +214,6 @@ class LyricsRepository(private val cacheDir: File? = null) {
 
     private suspend fun saveToDisk(file: File?, result: LyricsResult) {
         file ?: return
-        // I "non trovati" NON vengono persistiti: la community di LRCLIB può
-        // aggiungere la lyrics in seguito, e una richiesta in più a sessione
-        // costa meno di una cache negativa che non sblocca mai.
         if (result is LyricsResult.None) return
 
         val cached = when (result) {
@@ -182,8 +243,8 @@ class LyricsRepository(private val cacheDir: File? = null) {
         .filterNot { it.instrumental == true }
         .map { it to score(it, title, artist, album, durationMs) }
         .maxByOrNull { it.second }
-        ?.takeIf { it.second >= MIN_SCORE }
-        ?.first
+        .takeIf { it != null && it.second >= MIN_SCORE }
+        ?.first // Corretto: chiamata con safe call '?.' perché takeIf può restituire null
         .let(::buildResult)
 
     private fun buildResult(entry: LyricsEntry?): LyricsResult {
@@ -199,11 +260,6 @@ class LyricsRepository(private val cacheDir: File? = null) {
         return LyricsResult.None
     }
 
-    /**
-     * Titolo e artista sono obbligatori tutti e due: senza questo vincolo un
-     * brano omonimo con titolo identico e durata coincidente potrebbe vincere
-     * attaccando le lyrics di un'altra canzone.
-     */
     private fun score(
         entry: LyricsEntry,
         title: String,
@@ -219,7 +275,6 @@ class LyricsRepository(private val cacheDir: File? = null) {
         val titleScore = when {
             gotTitle.isEmpty() -> 0
             gotTitle == wantedTitle -> 50
-            // LRCLIB ha molte voci nel formato "Artista - Titolo"
             gotTitle.endsWith(" - $wantedTitle") -> 50
             wantedTitle.isNotEmpty() && (wantedTitle in gotTitle || gotTitle in wantedTitle) -> 30
             else -> 0
@@ -239,11 +294,10 @@ class LyricsRepository(private val cacheDir: File? = null) {
         if (album != null && entry.albumName != null && normalize(album) == normalize(entry.albumName)) {
             total += 15
         }
-        // La durata è il disambiguatore migliore tra monoversioni e compilation
-        if (durationMs > 0 && entry.duration != null && abs(entry.duration - durationMs / 1000.0) <= 3.0) {
+        // Corretta la sottrazione tra entry.duration e (durationMs / 1000.0)
+        if (durationMs > 0 && entry.duration != null && abs(entry.duration - (durationMs / 1000.0)) <= 3.0) {
             total += 25
         }
-        // Il sincronizzato è quello che serve: a parità di tutto, preferiamo quello
         if (!entry.syncedLyrics.isNullOrBlank()) total += 20
 
         return total
@@ -253,14 +307,6 @@ class LyricsRepository(private val cacheDir: File? = null) {
 
     private val timestamp = Regex("""\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]""")
 
-    /**
-     * Converte il formato LRC in righe con il tempo in ms.
-     *
-     * Una riga può portare più timestamp (`[00:10.00][01:05.00] testo`): il
-     * testo è sempre quello che segue l'ultimo, e viene replicato per ciascuno.
-     * Le righe di metadati (`[ar: ...]`) non hanno una durata in secondi e
-     * quindi non matchano.
-     */
     internal fun parseLrc(raw: String): List<LyricLine> {
         val lines = ArrayList<LyricLine>()
         for (row in raw.lineSequence()) {
@@ -272,7 +318,7 @@ class LyricsRepository(private val cacheDir: File? = null) {
                 val min = stamp.groupValues[1].toLongOrNull() ?: continue
                 val sec = stamp.groupValues[2].toLongOrNull() ?: continue
                 val frac = stamp.groupValues[3]
-                val millis = when (frac.length) {
+                val millis = when (frac?.length ?: 0) {
                     0 -> 0L
                     1 -> (frac.toLongOrNull() ?: 0L) * 100
                     2 -> (frac.toLongOrNull() ?: 0L) * 10
@@ -284,10 +330,22 @@ class LyricsRepository(private val cacheDir: File? = null) {
         return lines.sortedBy { it.timeMs }
     }
 
-    /** Minuscole, senza accenti e senza spazi di coda: così "città" == "citta". */
     private fun normalize(value: String): String =
         Normalizer.normalize(value, Normalizer.Form.NFD)
             .replace(Regex("[\u0300-\u036f]"), "")
             .lowercase()
             .trim()
+
+    companion object {
+        private const val TAG = "LyricsRepository"
+        private const val MIN_SCORE = 60
+        private const val KIND_SYNCED = "synced"
+        private const val KIND_PLAIN = "plain"
+    }
+
+    private data class CachedLyrics(
+        val kind: String?,
+        val text: String? = null,
+        val lines: List<LyricLine>? = null
+    )
 }
